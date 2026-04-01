@@ -1,0 +1,37 @@
+name: Bug Report
+description: Report a bug to help us improve
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "## Bug Description"
+  - type: textarea
+    id: description
+    attributes:
+      label: "Description"
+      description: "Describe the bug clearly"
+      placeholder: "What went wrong?"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to Reproduce"
+      description: "Steps to reproduce the behavior"
+      placeholder: "1. Do X\n2. Do Y\n3. See error"
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected Behavior"
+      description: "What should happen?"
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Error Logs/Screenshots"
+      description: "Attach any relevant logs or screenshots"
+  - type: input
+    id: environment
+    attributes:
+      label: "Environment"
+      placeholder: "e.g., Python 3.9, Discord.py 2.0"
