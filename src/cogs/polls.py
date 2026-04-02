@@ -18,11 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.event_models import Poll
 from src.services.xp_manager import XPManager
+from src.utils.colors import PRIZEPICKS_PRIMARY
+from src.utils.embeds import success_embed, error_embed, info_embed, empty_state_embed, progress_bar
+from src.utils.validation import validate_length, validate_range
+from src.utils.views import ConfirmView
 
 logger = logging.getLogger(__name__)
-
-# PrizePicks brand purple
-PRIZEPICKS_COLOR = discord.Color.from_rgb(108, 43, 217)
 
 # Taco Tuesday player pool (hardcoded for demo; could be fetched from PrizePicks API)
 TACO_TUESDAY_PLAYERS = [
@@ -51,9 +52,11 @@ class PollView(discord.ui.View):
         self.cog = cog
 
         # Create buttons for each option (max 4)
+        option_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
         for idx, option in enumerate(options[:4]):
             button = discord.ui.Button(
-                label=f"Vote: {option}",
+                label=option[:20],
+                emoji=option_emojis[idx],
                 custom_id=f"poll_{poll_id}_{idx}",
                 style=discord.ButtonStyle.primary,
             )
@@ -111,6 +114,69 @@ class PollsCog(commands.Cog):
         pass
 
     @poll_group.command(
+        name="list",
+        description="Show active polls",
+    )
+    async def list_polls(self, ctx: discord.ApplicationContext) -> None:
+        """
+        List all active polls.
+
+        Args:
+            ctx: Discord application context
+        """
+        await ctx.defer()
+
+        try:
+            stmt = select(Poll).where(
+                and_(
+                    Poll.guild_id == ctx.guild_id,
+                    Poll.status == "active",
+                )
+            )
+            result = await self.db.execute(stmt)
+            polls = result.scalars().all()
+
+            if not polls:
+                embed = empty_state_embed(
+                    "Polls",
+                    "No active polls right now",
+                    ["/poll create", "/poll taco_tuesday"]
+                )
+                await ctx.followup.send(embed=embed)
+                return
+
+            embed = info_embed(
+                "Active Polls",
+                f"Viewing {len(polls)} poll(s)"
+            )
+
+            for poll in polls[:5]:
+                options_data = json.loads(poll.options_json)
+                votes_data = json.loads(poll.votes_json)
+                option_count = len(options_data)
+                total_votes = len(votes_data)
+
+                embed.add_field(
+                    name=f"• {poll.title[:40]}",
+                    value=f"ID: `{poll.id}` • {option_count} options • {total_votes} votes",
+                    inline=False,
+                )
+
+            await ctx.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.exception("Error listing polls")
+            await ctx.followup.send(
+                embed=error_embed(
+                    "List Failed",
+                    "Could not retrieve polls",
+                    recovery_hint="Try again",
+                    error_code="POLL_LIST_ERROR"
+                ),
+                ephemeral=True,
+            )
+
+    @poll_group.command(
         name="create",
         description="Create a new community poll (admin/mod only)",
     )
@@ -123,6 +189,7 @@ class PollsCog(commands.Cog):
         option2: str,
         option3: Optional[str] = None,
         option4: Optional[str] = None,
+        duration_hours: int = 168,
     ) -> None:
         """
         Create a new poll with up to 4 options.
@@ -134,16 +201,47 @@ class PollsCog(commands.Cog):
             option2: Second option
             option3: Optional third option
             option4: Optional fourth option
+            duration_hours: How long poll stays open (default 7 days = 168 hours)
         """
         await ctx.defer()
 
         try:
+            # Validate title length
+            is_valid, error_msg = validate_length(title, 1, 100, "Poll title")
+            if not is_valid:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Title", error_msg),
+                    ephemeral=True,
+                )
+                return
+
+            # Validate duration
+            is_valid, error_msg = validate_range(duration_hours, 1, 2160, "Duration")
+            if not is_valid:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Duration", error_msg),
+                    ephemeral=True,
+                )
+                return
+
             # Build options list
             options = [option1, option2]
             if option3:
                 options.append(option3)
             if option4:
                 options.append(option4)
+
+            # Validate options count
+            if len(options) < 2 or len(options) > 4:
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Invalid Options Count",
+                        "Polls must have 2-4 options",
+                        recovery_hint="Remove extra options or add more"
+                    ),
+                    ephemeral=True,
+                )
+                return
 
             # Create poll record
             poll = Poll(
@@ -155,7 +253,7 @@ class PollsCog(commands.Cog):
                 votes_json=json.dumps({}),
                 status="active",
                 created_by=ctx.author.id,
-                closes_at=datetime.utcnow() + timedelta(days=7),
+                closes_at=datetime.utcnow() + timedelta(hours=duration_hours),
             )
 
             self.db.add(poll)
@@ -163,18 +261,19 @@ class PollsCog(commands.Cog):
             await self.db.commit()
 
             # Create message with voting view
-            embed = discord.Embed(
-                title=title,
-                description=f"Poll created by {ctx.author.mention}",
-                color=PRIZEPICKS_COLOR,
-                timestamp=datetime.utcnow(),
+            closes_in = f"{duration_hours} hours"
+            if duration_hours == 168:
+                closes_in = "7 days"
+            elif duration_hours == 24:
+                closes_in = "1 day"
+
+            embed = info_embed(
+                title,
+                f"Created by {ctx.author.mention} • Closes in {closes_in}",
+                fields=[
+                    ("Options", "\n".join([f"• {opt}" for opt in options]), False),
+                ]
             )
-            embed.add_field(
-                name="Options",
-                value="\n".join([f"• {opt}" for opt in options]),
-                inline=False,
-            )
-            embed.set_footer(text=f"Poll ID: {poll.id} | Closes in 7 days")
 
             view = PollView(poll.id, options, self)
             message = await ctx.respond(embed=embed, view=view)
@@ -184,18 +283,21 @@ class PollsCog(commands.Cog):
             await self.db.commit()
 
             await ctx.followup.send(
-                f"Poll created successfully! ID: `{poll.id}`",
+                embed=success_embed("Poll Created", f"Poll ID: `{poll.id}`"),
                 ephemeral=True,
             )
 
         except Exception as e:
             logger.exception("Error creating poll")
-            error_embed = discord.Embed(
-                title="Error Creating Poll",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Poll Creation Failed",
+                    "An error occurred while creating the poll",
+                    recovery_hint="Try again or contact support",
+                    error_code="POLL_CREATE_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @poll_group.command(
         name="taco_tuesday",
@@ -212,7 +314,7 @@ class PollsCog(commands.Cog):
         await ctx.defer()
 
         try:
-            title = "🌮 Taco Tuesday: Which player has the best stat line this week?"
+            title = "🌮 Taco Tuesday: Best Stat Line This Week?"
             options = TACO_TUESDAY_PLAYERS[:4]
 
             # Create Taco Tuesday poll record
@@ -233,18 +335,13 @@ class PollsCog(commands.Cog):
             await self.db.commit()
 
             # Create message with voting view
-            embed = discord.Embed(
-                title=title,
-                description="Vote on this week's top performer!",
-                color=PRIZEPICKS_COLOR,
-                timestamp=datetime.utcnow(),
+            embed = info_embed(
+                title,
+                "Vote on this week's top performer!",
+                fields=[
+                    ("Nominees", "\n".join([f"• {opt}" for opt in options]), False),
+                ]
             )
-            embed.add_field(
-                name="Nominees",
-                value="\n".join([f"• {opt}" for opt in options]),
-                inline=False,
-            )
-            embed.set_footer(text=f"Poll ID: {poll.id} | Closes tomorrow at this time")
 
             view = PollView(poll.id, options, self)
             message = await ctx.respond(embed=embed, view=view)
@@ -254,18 +351,21 @@ class PollsCog(commands.Cog):
             await self.db.commit()
 
             await ctx.followup.send(
-                "🌮 Taco Tuesday poll launched!",
+                embed=success_embed("Taco Tuesday", "Poll launched! 🌮"),
                 ephemeral=True,
             )
 
         except Exception as e:
             logger.exception("Error creating Taco Tuesday poll")
-            error_embed = discord.Embed(
-                title="Error Creating Poll",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Poll Creation Failed",
+                    "Failed to create Taco Tuesday poll",
+                    recovery_hint="Try again later",
+                    error_code="TACO_POLL_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @poll_group.command(
         name="results",
@@ -292,12 +392,14 @@ class PollsCog(commands.Cog):
             poll = result.scalars().first()
 
             if not poll:
-                error_embed = discord.Embed(
-                    title="Poll Not Found",
-                    description=f"No poll found with ID: {poll_id}",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Poll Not Found",
+                        f"No poll found with ID: {poll_id}",
+                        recovery_hint="Check the poll ID and try again"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
             # Parse options and votes
@@ -313,37 +415,34 @@ class PollsCog(commands.Cog):
             total_votes = sum(vote_counts)
 
             # Build results embed
-            embed = discord.Embed(
-                title=f"Poll Results: {poll.title}",
-                description=f"Total votes: {total_votes}",
-                color=PRIZEPICKS_COLOR,
-                timestamp=datetime.utcnow(),
+            embed = info_embed(
+                f"Results: {poll.title[:50]}",
+                f"Total votes: {total_votes}"
             )
 
             # Add vote bars for each option
             for idx, option in enumerate(options):
                 count = vote_counts[idx]
-                pct = (count / total_votes * 100) if total_votes > 0 else 0
-                bar_filled = int(pct / 5)
-                bar_empty = 20 - bar_filled
-                bar = "▓" * bar_filled + "░" * bar_empty
+                bar = progress_bar(count, max(total_votes, 1))
                 embed.add_field(
                     name=f"{option.get('text', option)}",
-                    value=f"{bar} {count} votes ({pct:.1f}%)",
+                    value=f"{bar}\n`{count}` votes",
                     inline=False,
                 )
 
-            embed.set_footer(text=f"Poll ID: {poll.id} | Status: {poll.status}")
             await ctx.followup.send(embed=embed)
 
         except Exception as e:
             logger.exception("Error fetching poll results")
-            error_embed = discord.Embed(
-                title="Error Fetching Results",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Results Fetch Failed",
+                    "Could not retrieve poll results",
+                    recovery_hint="Try again in a moment",
+                    error_code="POLL_RESULTS_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @poll_group.command(
         name="close",
@@ -371,31 +470,51 @@ class PollsCog(commands.Cog):
             poll = result.scalars().first()
 
             if not poll:
-                error_embed = discord.Embed(
-                    title="Poll Not Found",
-                    description=f"No poll found with ID: {poll_id}",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Poll Not Found",
+                        f"No poll with ID: {poll_id}",
+                        recovery_hint="Check the ID and try again"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
-            poll.status = "closed"
-            poll.closed_at = datetime.utcnow()
-            await self.db.commit()
-
-            await ctx.followup.send(
-                f"Poll {poll_id} has been closed.",
-                ephemeral=True,
+            # Ask for confirmation
+            view = ConfirmView()
+            confirm_embed = info_embed(
+                "Close Poll?",
+                f"Close poll \"{poll.title[:40]}\"? Results will be final.",
             )
+            await ctx.followup.send(embed=confirm_embed, view=view, ephemeral=True)
+
+            await view.wait()
+            if view.result:
+                poll.status = "closed"
+                poll.closed_at = datetime.utcnow()
+                await self.db.commit()
+
+                await ctx.followup.send(
+                    embed=success_embed("Poll Closed", f"Poll {poll_id} is now closed"),
+                    ephemeral=True,
+                )
+            else:
+                await ctx.followup.send(
+                    "Poll close cancelled",
+                    ephemeral=True,
+                )
 
         except Exception as e:
             logger.exception("Error closing poll")
-            error_embed = discord.Embed(
-                title="Error Closing Poll",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Close Failed",
+                    "Could not close the poll",
+                    recovery_hint="Try again",
+                    error_code="POLL_CLOSE_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     async def process_vote(
         self,
@@ -448,17 +567,20 @@ class PollsCog(commands.Cog):
             options = json.loads(poll.options_json)
             selected_option = options[option_idx].get("text", "Unknown")
 
-            embed = discord.Embed(
-                title="Vote Recorded",
-                description=f"You voted for: **{selected_option}**",
-                color=PRIZEPICKS_COLOR,
+            embed = success_embed(
+                "Vote Recorded",
+                f"You voted for: **{selected_option}**"
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.exception("Error processing poll vote")
             await interaction.response.send_message(
-                f"Error recording vote: {str(e)}",
+                embed=error_embed(
+                    "Vote Failed",
+                    "Could not record your vote",
+                    recovery_hint="Try again",
+                ),
                 ephemeral=True,
             )
 

@@ -17,6 +17,8 @@ from discord.ext import commands, tasks
 from src.models.database import Database, Subscription
 from src.services.analytics import AnalyticsService
 from src.services.prizepicks_api import PrizepicksAPIClient
+from src.utils.embeds import info_embed, error_embed, empty_state_embed, success_embed
+from src.utils.views import UnsubscribeView
 
 logger = logging.getLogger(__name__)
 
@@ -84,19 +86,23 @@ class BoardAlertsCog(commands.Cog):
         """
         try:
             if not self.db:
-                await ctx.respond(
-                    "Database not available. Please try again.",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Database Error",
+                    "Database not available",
+                    recovery_hint="Please try again",
+                    error_code="DB_UNAVAILABLE"
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             # Check if already subscribed
             existing = await self.db.get_subscription(ctx.author.id, sport)
             if existing:
-                await ctx.respond(
+                embed = info_embed(
+                    "Already Subscribed",
                     f"You're already subscribed to {sport} alerts!",
-                    ephemeral=True,
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             # Create subscription
@@ -119,19 +125,22 @@ class BoardAlertsCog(commands.Cog):
                     },
                 )
 
-            await ctx.respond(
-                f"Subscribed to {sport} alerts! You'll receive notifications "
-                f"when new boards drop.",
-                ephemeral=True,
+            embed = success_embed(
+                f"{sport} Alerts Enabled",
+                f"You'll receive notifications when new boards drop.",
             )
+            await ctx.respond(embed=embed, ephemeral=True)
             logger.info(f"User {ctx.author.id} subscribed to {sport}")
 
         except Exception as e:
             logger.error(f"Error in subscribe command: {e}", exc_info=True)
-            await ctx.respond(
-                "An error occurred. Please try again.",
-                ephemeral=True,
+            embed = error_embed(
+                "Subscription Failed",
+                "An error occurred while subscribing",
+                recovery_hint="Please try again in a moment",
+                error_code="SUBSCRIBE_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @commands.slash_command(
         name="unsubscribe",
@@ -155,36 +164,44 @@ class BoardAlertsCog(commands.Cog):
         """
         try:
             if not self.db:
-                await ctx.respond(
-                    "Database not available. Please try again.",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Database Error",
+                    "Database not available",
+                    recovery_hint="Please try again",
+                    error_code="DB_UNAVAILABLE"
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             # Check if subscribed
             subscription = await self.db.get_subscription(ctx.author.id, sport)
             if not subscription:
-                await ctx.respond(
+                embed = info_embed(
+                    "Not Subscribed",
                     f"You're not subscribed to {sport} alerts.",
-                    ephemeral=True,
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             # Delete subscription
             await self.db.delete_subscription(ctx.author.id, sport)
 
-            await ctx.respond(
-                f"Unsubscribed from {sport} alerts.",
-                ephemeral=True,
+            embed = success_embed(
+                f"{sport} Alerts Disabled",
+                "You've been unsubscribed from these alerts."
             )
+            await ctx.respond(embed=embed, ephemeral=True)
             logger.info(f"User {ctx.author.id} unsubscribed from {sport}")
 
         except Exception as e:
             logger.error(f"Error in unsubscribe command: {e}", exc_info=True)
-            await ctx.respond(
-                "An error occurred. Please try again.",
-                ephemeral=True,
+            embed = error_embed(
+                "Unsubscribe Failed",
+                "An error occurred while unsubscribing",
+                recovery_hint="Please try again in a moment",
+                error_code="UNSUBSCRIBE_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @commands.slash_command(
         name="mysubs",
@@ -199,38 +216,43 @@ class BoardAlertsCog(commands.Cog):
         """
         try:
             if not self.db:
-                await ctx.respond(
-                    "Database not available. Please try again.",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Database Error",
+                    "Database not available",
+                    recovery_hint="Please try again",
+                    error_code="DB_UNAVAILABLE"
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             subscriptions = await self.db.get_user_subscriptions(ctx.author.id)
 
             if not subscriptions:
-                embed = discord.Embed(
-                    title="Your Subscriptions",
-                    description="You're not subscribed to any sports.",
-                    color=discord.Color.blue(),
+                embed = empty_state_embed(
+                    "Your Subscriptions",
+                    "You're not subscribed to any sports yet",
+                    ["/subscribe", "/mysubs"]
                 )
             else:
                 subs_text = "\n".join(
-                    [f"â¢ {sub.sport}" for sub in subscriptions]
+                    [f"• {sub.sport}" for sub in subscriptions]
                 )
-                embed = discord.Embed(
-                    title="Your Subscriptions",
-                    description=subs_text,
-                    color=discord.Color.blue(),
+                embed = info_embed(
+                    "Your Subscriptions",
+                    subs_text,
                 )
 
             await ctx.respond(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error in mysubs command: {e}", exc_info=True)
-            await ctx.respond(
-                "An error occurred. Please try again.",
-                ephemeral=True,
+            embed = error_embed(
+                "Subscription Lookup Failed",
+                "An error occurred while retrieving your subscriptions",
+                recovery_hint="Please try again in a moment",
+                error_code="SUBS_LIST_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @tasks.loop(seconds=POLL_INTERVAL)
     async def alert_loop(self) -> None:
@@ -323,38 +345,41 @@ class BoardAlertsCog(commands.Cog):
                         continue
 
                     # Create alert embed
-                    embed = discord.Embed(
-                        title=f"{sport} Board Update",
-                        color=discord.Color.gold(),
-                    )
+                    fields = []
 
                     if new_projs:
                         new_text = "\n".join(
-                            [f"â¢ {p['player_name']} {p['stat_type']}" for p in new_projs[:5]]
+                            [f"• {p['player_name']} {p['stat_type']}" for p in new_projs[:5]]
                         )
-                        embed.add_field(
-                            name=f"New Props ({len(new_projs)})",
-                            value=new_text,
-                            inline=False,
-                        )
+                        fields.append((f"New Props ({len(new_projs)})", new_text, False))
 
                     if moved_projs:
                         moved_text = "\n".join(
                             [
-                                f"â¢ {p['player_name']} {p['stat_type']}: "
-                                f"{p['old_line']} â {p['new_line']}"
+                                f"• {p['player_name']} {p['stat_type']}: "
+                                f"{p['old_line']} → {p['new_line']}"
                                 for p in moved_projs[:5]
                             ]
                         )
-                        embed.add_field(
-                            name=f"Line Movements ({len(moved_projs)})",
-                            value=moved_text,
-                            inline=False,
-                        )
+                        fields.append((f"Line Movements ({len(moved_projs)})", moved_text, False))
 
-                    embed.timestamp = discord.utils.utcnow()
+                    embed = info_embed(
+                        f"{sport} Board Update",
+                        "New projections and line movements detected",
+                        fields
+                    )
 
-                    await user.send(embed=embed)
+                    # Add unsubscribe button
+                    view = UnsubscribeView(subscriber.discord_user_id, sport)
+
+                    # Add footer with subscription info
+                    embed.add_field(
+                        name="Manage Subscriptions",
+                        value=f"You're subscribed to {sport}. Use `/alerts manage` to adjust",
+                        inline=False
+                    )
+
+                    await user.send(embed=embed, view=view)
 
                     # Emit analytics event
                     if self.analytics:

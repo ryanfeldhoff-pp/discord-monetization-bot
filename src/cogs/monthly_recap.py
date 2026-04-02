@@ -16,6 +16,7 @@ from sqlalchemy import select
 from src.services.xp_manager import XPManager
 from src.services.image_generator import RecapCardGenerator
 from src.models.xp_models import RecapPreference, AccountLink
+from src.utils.embeds import info_embed, error_embed, loading_embed, success_embed
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,8 @@ class MonthlyRecap(commands.Cog):
 
     Features:
     - Auto-generates recaps on 1st of each month
-    - /recap â Manually trigger recap generation
-    - /recap off â Opt out of automatic recaps
+    - /recap — Manually trigger recap generation
+    - /recap off — Opt out of automatic recaps
     - Shareable recap cards with referral links
     """
 
@@ -38,12 +39,12 @@ class MonthlyRecap(commands.Cog):
         db_session,
         prizepicks_api_client,
     ):
-       """
+        """
         Initialize Monthly Recap cog.
 
         Args:
             bot: Discord bot instance
-            (xp_manager: XPManager service instance
+            xp_manager: XPManager service instance
             db_session: Async SQLAlchemy session
             prizepicks_api_client: PrizePicks API client
         """
@@ -80,26 +81,35 @@ class MonthlyRecap(commands.Cog):
         try:
             user_id = ctx.author.id
 
+            # Send loading state
+            loading_msg = await ctx.respond(embed=loading_embed("Generating your monthly recap..."))
+
             # Check if account is linked
             stmt = select(AccountLink).where(AccountLink.discord_user_id == user_id)
             result = await self.db.execute(stmt)
             account_link = result.scalar_one_or_none()
 
             if not account_link:
-                await ctx.respond(
-                    "Link your PrizePicks account to view recaps.\nUse `/link_account`",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Account Not Linked",
+                    "Link your PrizePicks account to view recaps",
+                    recovery_hint="Use `/link` to authorize your account",
+                    error_code="NOT_LINKED"
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
-            # Gather recap data
+            # Generate recap data
             recap_data = await self._gather_recap_data(user_id, account_link)
 
             if not recap_data:
-                await ctx.respond(
-                    "Not enough data to generate recap yet.",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Insufficient Data",
+                    "Not enough activity to generate recap yet",
+                    recovery_hint="Start chatting and making entries to generate your recap!",
+                    error_code="INSUFFICIENT_DATA"
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             # Generate image
@@ -108,11 +118,14 @@ class MonthlyRecap(commands.Cog):
             # Create referral link
             referral_link = await self._generate_referral_link(user_id)
 
+            # Get current month and year for context
+            now = datetime.utcnow()
+            month_year = now.strftime("%B %Y")
+
             # Create embed with share buttons
-            embed = discord.Embed(
-                title="Your Monthly Recap",
-                description="Check out your December recap!",
-                color=discord.Color.purple(),
+            embed = info_embed(
+                "Your Monthly Recap",
+                f"Here's your recap for {month_year}!",
             )
 
             embed.set_image(url="attachment://recap.png")
@@ -144,10 +157,13 @@ class MonthlyRecap(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in recap command: {e}")
-            await ctx.respond(
-                "Error generating recap. Please try again later.",
-                ephemeral=True,
+            embed = error_embed(
+                "Recap Generation Failed",
+                "An error occurred while generating your recap",
+                recovery_hint="Please try again in a moment",
+                error_code="RECAP_GEN_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @commands.slash_command(
         name="recap_opt",
@@ -191,15 +207,28 @@ class MonthlyRecap(commands.Cog):
 
             await self.db.commit()
 
-            status = "disabled" if opted_out else "enabled"
-            await ctx.respond(f"Automatic recaps {status}.")
+            if opted_out:
+                embed = success_embed(
+                    "Recaps Disabled",
+                    "You won't receive automatic monthly recaps",
+                )
+            else:
+                embed = success_embed(
+                    "Recaps Enabled",
+                    "You'll receive automatic monthly recaps on the 1st of each month",
+                )
+
+            await ctx.respond(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error in recap opt command: {e}")
-            await ctx.respond(
-                "Error updating preference.",
-                ephemeral=True,
+            embed = error_embed(
+                "Preference Update Failed",
+                "Error updating your recap preferences",
+                recovery_hint="Please try again in a moment",
+                error_code="PREF_UPDATE_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @tasks.loop(hours=24)
     async def distribute_monthly_recaps(self) -> None:
@@ -266,7 +295,7 @@ class MonthlyRecap(commands.Cog):
 
         Args:
             user_id: Discord user ID
-       """
+        """
         try:
             user = await self.bot.fetch_user(user_id)
 
@@ -291,11 +320,11 @@ class MonthlyRecap(commands.Cog):
             # Create referral link
             referral_link = await self._generate_referral_link(user_id)
 
-            # Create embed
-            embed = discord.Embed(
-                title="Your Monthly Recap",
-                description=f"Here's your recap for {datetime.utcnow().strftime('%B')}!",
-                color=discord.Color.purple(),
+            # Create embed with month/year context
+            month_year = datetime.utcnow().strftime("%B %Y")
+            embed = info_embed(
+                "Your Monthly Recap",
+                f"Here's your recap for {month_year}!",
             )
 
             embed.set_image(url="attachment://recap.png")
@@ -344,8 +373,8 @@ class MonthlyRecap(commands.Cog):
             #   "win_rate": 0.55,
             #   "biggest_win": 150.00,
             #   "most_played": {
-            #      "sport": "NFL",
-            #      "player": "Patrick Mahomes"
+            #     "sport": "NFL",
+            #     "player": "Patrick Mahomes"
             #   }
             # }
 
@@ -357,7 +386,6 @@ class MonthlyRecap(commands.Cog):
 
             # Count messages sent this month
             from sqlalchemy import func, and_
-
             from src.models.xp_models import XPTransaction
 
             month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)
@@ -421,7 +449,7 @@ class RecapShareView(discord.ui.View):
     @discord.ui.button(
         label="Share to Channel",
         style=discord.ButtonStyle.gray,
-        emoji="ð¢",
+        emoji="📢",
     )
     async def share_channel(
         self,
@@ -438,7 +466,7 @@ class RecapShareView(discord.ui.View):
     @discord.ui.button(
         label="Share to Social",
         style=discord.ButtonStyle.blurple,
-        emoji="ð",
+        emoji="🔗",
     )
     async def share_social(
         self,
@@ -446,10 +474,9 @@ class RecapShareView(discord.ui.View):
         interaction: discord.Interaction,
     ) -> None:
         """Share to social media with referral link."""
-        embed = discord.Embed(
-            title="Share Your Recap",
-            description=f"Share this link with your friends:\n{self.referral_link}",
-            color=discord.Color.blurple(),
+        embed = info_embed(
+            "Share Your Recap",
+            f"Share this link with your friends:\n{self.referral_link}",
         )
 
         await interaction.response.send_message(

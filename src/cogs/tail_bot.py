@@ -8,6 +8,7 @@ and provides one-tap entry tailing via deeplinks.
 import logging
 import re
 from typing import Optional
+from datetime import datetime
 
 import discord
 from discord.ext import commands
@@ -16,6 +17,12 @@ from src.services.analytics import AnalyticsService
 from src.services.prizepicks_api import PrizepicksAPIClient
 from src.utils.deeplinks import DeeplinkGenerator
 from src.utils.rate_limiter import RateLimiter
+from src.utils.embeds import (
+    success_embed,
+    error_embed,
+    info_embed,
+)
+from src.utils.colors import PRIZEPICKS_PRIMARY
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +78,9 @@ class TailView(discord.ui.View):
             button.label = f"Tail ({self.tail_count})"
 
             # Send ephemeral response with deeplink
-            embed = discord.Embed(
-                title="Opening PrizePicks",
-                description="Click the button below to open this entry in PrizePicks",
-                color=discord.Color.green(),
+            embed = success_embed(
+                "Opening PrizePicks",
+                "Click the button below to open this entry",
             )
 
             view = discord.ui.View()
@@ -98,10 +104,13 @@ class TailView(discord.ui.View):
 
         except Exception as e:
             logger.error(f"Error handling tail button click: {e}", exc_info=True)
-            await interaction.response.send_message(
-                "An error occurred. Please try again.",
-                ephemeral=True,
+            embed = error_embed(
+                "Tail Action Failed",
+                "An error occurred while processing your request",
+                recovery_hint="Please try again in a moment",
+                error_code="TAIL_ERROR"
             )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class TailBotCog(commands.Cog):
@@ -222,6 +231,17 @@ class TailBotCog(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error processing entry {entry_id}: {e}", exc_info=True)
+            # Send error embed to channel with recovery guidance
+            embed = error_embed(
+                "Entry Processing Failed",
+                f"Could not process entry {entry_id}",
+                recovery_hint="Please try sharing the entry again",
+                error_code="ENTRY_PROCESS_ERROR"
+            )
+            try:
+                await channel.send(embed=embed, delete_after=30)
+            except Exception:
+                pass
 
     def _create_entry_embed(self, entry_data: dict) -> discord.Embed:
         """
@@ -233,39 +253,26 @@ class TailBotCog(commands.Cog):
         Returns:
             discord.Embed: Formatted embed
         """
-        embed = discord.Embed(
-            title="PrizePicks Entry",
-            description=entry_data.get("title", "Custom Entry"),
-            color=discord.Color.purple(),
-        )
+        fields = []
 
         # Add entry details
         if "projections" in entry_data and entry_data["projections"]:
             projections = entry_data["projections"]
             props_summary = self._format_projections(projections)
-            embed.add_field(
-                name="Props",
-                value=props_summary,
-                inline=False,
-            )
+            fields.append(("Props", props_summary, False))
 
         if "line" in entry_data:
-            embed.add_field(
-                name="Line",
-                value=f"${entry_data['line']}",
-                inline=True,
-            )
+            fields.append(("Line", f"${entry_data['line']}", True))
 
         if "payout" in entry_data:
-            embed.add_field(
-                name="Payout",
-                value=f"${entry_data['payout']}",
-                inline=True,
-            )
+            fields.append(("Payout", f"${entry_data['payout']}", True))
 
-        # Add timestamp
-        embed.timestamp = discord.utils.utcnow()
-        embed.set_footer(text="PrizePicks")
+        embed = info_embed(
+            "PrizePicks Entry",
+            entry_data.get("title", "Custom Entry"),
+            fields,
+        )
+        embed.color = PRIZEPICKS_PRIMARY
 
         return embed
 

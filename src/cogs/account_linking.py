@@ -1,5 +1,5 @@
 """
-Discord â PrizePicks Account Linking Cog.
+Discord ↔ PrizePicks Account Linking Cog.
 
 Handles OAuth 2.0 authentication flow, account linking/unlinking, and role management.
 """
@@ -7,6 +7,7 @@ Handles OAuth 2.0 authentication flow, account linking/unlinking, and role manag
 import logging
 import os
 import secrets
+from datetime import datetime, timedelta
 from typing import Optional
 
 import discord
@@ -15,6 +16,13 @@ from discord.ext import commands
 
 from src.models.database import AccountLink, Database
 from src.services.prizepicks_api import PrizepicksAPIClient
+from src.utils.embeds import (
+    info_embed,
+    success_embed,
+    error_embed,
+    confirmation_embed,
+)
+from src.utils.views import ConfirmView
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +34,11 @@ class LinkState:
         """Initialize link state."""
         self.state = state
         self.discord_user_id = discord_user_id
+        self.created_at = datetime.utcnow()
+
+    def is_expired(self, timeout_minutes: int = 10) -> bool:
+        """Check if state has expired (default 10 minutes)."""
+        return datetime.utcnow() - self.created_at > timedelta(minutes=timeout_minutes)
 
 
 class AccountLinkingCog(commands.Cog):
@@ -94,13 +107,14 @@ class AccountLinkingCog(commands.Cog):
             if self.db:
                 existing = await self.db.get_account_link(ctx.author.id)
                 if existing and existing.status == "linked":
-                    await ctx.respond(
+                    embed = info_embed(
+                        "Already Linked",
                         "Your account is already linked to PrizePicks!",
-                        ephemeral=True,
                     )
+                    await ctx.respond(embed=embed, ephemeral=True)
                     return
 
-            # Generate state for CSRF protection
+            # Generate state for CSRF protection (10-minute timeout)
             state = secrets.token_urlsafe(32)
             self.oauth_states[state] = LinkState(state, ctx.author.id)
 
@@ -108,15 +122,12 @@ class AccountLinkingCog(commands.Cog):
             oauth_url = self._generate_oauth_url(state)
 
             # Send ephemeral message with auth URL
-            embed = discord.Embed(
-                title="Link Your PrizePicks Account",
-                description="Click the button below to authorize and link your account.",
-                color=discord.Color.blue(),
-            )
-            embed.add_field(
-                name="What happens next?",
-                value="1. Click the link button\n2. Authorize on PrizePicks\n3. Return to Discord\n4. You'll be assigned the 'Linked' role",
-                inline=False,
+            embed = info_embed(
+                "Link Your PrizePicks Account",
+                "Click the button below to authorize and link your account.",
+                [
+                    ("What happens next?", "1. Click the link button\n2. Authorize on PrizePicks\n3. Return to Discord\n4. You'll be assigned the 'Linked' role", False),
+                ]
             )
 
             view = discord.ui.View()
@@ -127,16 +138,26 @@ class AccountLinkingCog(commands.Cog):
                     style=discord.ButtonStyle.link,
                 )
             )
+            view.add_item(
+                discord.ui.Button(
+                    label="Cancel",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id="cancel_linking",
+                )
+            )
 
             await ctx.respond(embed=embed, view=view, ephemeral=True)
             logger.info(f"Link flow initiated for user {ctx.author.id}")
 
         except Exception as e:
             logger.error(f"Error in link command: {e}", exc_info=True)
-            await ctx.respond(
-                "An error occurred while initiating the link process. Please try again.",
-                ephemeral=True,
+            embed = error_embed(
+                "Link Initiation Failed",
+                "An error occurred while initiating the link process",
+                recovery_hint="Please try again in a moment",
+                error_code="LINK_INIT_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @commands.slash_command(
         name="unlink",
@@ -144,26 +165,44 @@ class AccountLinkingCog(commands.Cog):
     )
     async def unlink_account(self, ctx: discord.ApplicationContext) -> None:
         """
-        Unlink Discord account from PrizePicks.
+        Unlink Discord account from PrizePicks with confirmation.
 
         Args:
             ctx: Discord application context
         """
         try:
             if not self.db:
-                await ctx.respond(
-                    "Database not available. Please try again.",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Database Error",
+                    "Database not available",
+                    recovery_hint="Please try again",
+                    error_code="DB_UNAVAILABLE"
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             # Check if linked
             account_link = await self.db.get_account_link(ctx.author.id)
             if not account_link or account_link.status != "linked":
-                await ctx.respond(
+                embed = info_embed(
+                    "Not Linked",
                     "Your account is not linked to PrizePicks.",
-                    ephemeral=True,
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
+                return
+
+            # Ask for confirmation
+            confirm_view = ConfirmView()
+            embed = confirmation_embed(
+                "Unlink PrizePicks Account",
+                "This will disconnect your PrizePicks account from Discord and remove your 'Linked' role"
+            )
+
+            await ctx.respond(embed=embed, view=confirm_view, ephemeral=True)
+            await confirm_view.wait()
+
+            if not confirm_view.result:
+                await ctx.followup.send("Unlink cancelled", ephemeral=True)
                 return
 
             # Remove link from database
@@ -185,80 +224,94 @@ class AccountLinkingCog(commands.Cog):
                     },
                 )
 
-            await ctx.respond(
-                "Your account has been successfully unlinked.",
-                ephemeral=True,
+            embed = success_embed(
+                "Account Unlinked",
+                "Your account has been successfully disconnected from PrizePicks"
             )
+            await ctx.followup.send(embed=embed, ephemeral=True)
             logger.info(f"Account unlinked for user {ctx.author.id}")
 
         except Exception as e:
             logger.error(f"Error in unlink command: {e}", exc_info=True)
-            await ctx.respond(
-                "An error occurred while unlinking your account. Please try again.",
-                ephemeral=True,
+            embed = error_embed(
+                "Unlink Failed",
+                "An error occurred while unlinking your account",
+                recovery_hint="Please try again in a moment",
+                error_code="UNLINK_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @commands.slash_command(
-        name="linkstatus",
-        description="Check your PrizePicks account link status",
+        name="link",
+        description="Link your Discord account to PrizePicks",
     )
-    async def link_status(self, ctx: discord.ApplicationContext) -> None:
+    @discord.option(
+        name="status",
+        description="Check your account link status",
+        required=False,
+    )
+    async def link_status(self, ctx: discord.ApplicationContext, status: str = None) -> None:
         """
-        Display current link status.
+        Link subcommand to display current link status.
 
         Args:
             ctx: Discord application context
+            status: Subcommand name
         """
         try:
+            if status != "status":
+                return
+
             if not self.db:
-                await ctx.respond(
-                    "Database not available. Please try again.",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Database Error",
+                    "Database not available",
+                    recovery_hint="Please try again",
+                    error_code="DB_UNAVAILABLE"
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
             account_link = await self.db.get_account_link(ctx.author.id)
 
-            embed = discord.Embed(
-                title="Account Link Status",
-                color=discord.Color.green() if account_link else discord.Color.red(),
-            )
-
             if account_link and account_link.status == "linked":
-                embed.description = "Your account is linked!"
-                embed.add_field(
-                    name="Linked At",
-                    value=account_link.linked_at.isoformat(),
-                    inline=False,
+                # Check token expiry
+                if account_link.token_expires_at and datetime.fromisoformat(account_link.token_expires_at) < datetime.utcnow():
+                    embed = info_embed(
+                        "Link Expired",
+                        "Your account link has expired. Use `/link` to reconnect",
+                    )
+                    await ctx.respond(embed=embed, ephemeral=True)
+                    return
+
+                embed = success_embed(
+                    "Account Linked",
+                    "Your account is linked to PrizePicks!",
+                    [
+                        ("Linked At", account_link.linked_at.isoformat(), False),
+                        ("PrizePicks User ID", account_link.prizepicks_user_id, False),
+                    ]
                 )
-                embed.add_field(
-                    name="PrizePicks User ID",
-                    value=account_link.prizepicks_user_id,
-                    inline=False,
-                )
-                unlink_button = discord.ui.Button(
-                    label="Unlink Account",
-                    style=discord.ButtonStyle.red,
-                    custom_id="unlink_confirm",
-                )
-                view = discord.ui.View()
-                view.add_item(unlink_button)
-                await ctx.respond(embed=embed, view=view, ephemeral=True)
+                await ctx.respond(embed=embed, ephemeral=True)
             else:
-                embed.description = "Your account is not linked to PrizePicks."
-                embed.add_field(
-                    name="Next Steps",
-                    value="Use `/link` to start the linking process.",
-                    inline=False,
+                embed = info_embed(
+                    "Not Linked",
+                    "Your account is not linked to PrizePicks.",
+                    [
+                        ("Next Steps", "Use `/link` to start the linking process.", False),
+                    ]
                 )
                 await ctx.respond(embed=embed, ephemeral=True)
 
         except Exception as e:
-            logger.error(f"Error in linkstatus command: {e}", exc_info=True)
-            await ctx.respond(
-                "An error occurred while checking your link status.",
-                ephemeral=True,
+            logger.error(f"Error in link status command: {e}", exc_info=True)
+            embed = error_embed(
+                "Status Check Failed",
+                "An error occurred while checking your link status",
+                recovery_hint="Please try again in a moment",
+                error_code="STATUS_CHECK_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     async def handle_oauth_callback(self, request: web.Request) -> web.Response:
         """
@@ -283,7 +336,7 @@ class AccountLinkingCog(commands.Cog):
                     status=400,
                 )
 
-            # Verify state parameter (CSRF protection)
+            # Verify state parameter (CSRF protection) - check 10-minute timeout
             if state not in self.oauth_states:
                 logger.warning(f"Invalid state parameter: {state}")
                 return web.Response(
@@ -291,60 +344,79 @@ class AccountLinkingCog(commands.Cog):
                     status=400,
                 )
 
+            link_state = self.oauth_states.get(state)
+
+            # Check if state has expired
+            if link_state and link_state.is_expired(timeout_minutes=10):
+                self.oauth_states.pop(state, None)
+                logger.warning(f"OAuth state expired: {state}")
+                return web.Response(
+                    text="Authorization request has expired. Please try again.",
+                    status=400,
+                )
+
             link_state = self.oauth_states.pop(state)
 
-            # TODO: Exchange code for access token with PrizePicks backend
-            # This should call PrizePicks API to exchange code for token
-            # and get the user's PrizePicks ID
-            access_token = await self._exchange_code_for_token(code)
-            prizepicks_user_id = await self._get_prizepicks_user_id(access_token)
-
-            # Store in database
-            if self.db:
-                await self.db.create_account_link(
-                    discord_user_id=link_state.discord_user_id,
-                    prizepicks_user_id=prizepicks_user_id,
-                    status="linked",
-                )
-
-            # Try to assign role if in guild
-            guild_id = None
             try:
-                guild = self.bot.get_guild(guild_id)
-                if guild:
-                    member = guild.get_member(link_state.discord_user_id)
-                    if member:
-                        linked_role = discord.utils.get(guild.roles, name="Linked")
-                        if linked_role:
-                            await member.add_roles(linked_role)
-            except Exception as e:
-                logger.warning(f"Could not assign role: {e}")
+                # Exchange code for access token with PrizePicks backend
+                access_token = await self._exchange_code_for_token(code)
+                prizepicks_user_id = await self._get_prizepicks_user_id(access_token)
 
-            # Emit analytics event
-            if self.bot.analytics:
-                await self.bot.analytics.emit_event(
-                    "account_linked",
-                    {
-                        "discord_user_id": link_state.discord_user_id,
-                        "prizepicks_user_id": prizepicks_user_id,
-                        "timestamp": discord.utils.utcnow().isoformat(),
-                    },
+                # Store in database with token expiry
+                if self.db:
+                    token_expires_at = datetime.utcnow() + timedelta(hours=24)
+                    await self.db.create_account_link(
+                        discord_user_id=link_state.discord_user_id,
+                        prizepicks_user_id=prizepicks_user_id,
+                        status="linked",
+                        token_expires_at=token_expires_at.isoformat(),
+                    )
+
+                # Try to assign role if in guild
+                guild_id = None
+                try:
+                    guild = self.bot.get_guild(guild_id)
+                    if guild:
+                        member = guild.get_member(link_state.discord_user_id)
+                        if member:
+                            linked_role = discord.utils.get(guild.roles, name="Linked")
+                            if linked_role:
+                                await member.add_roles(linked_role)
+                except Exception as e:
+                    logger.warning(f"Could not assign role: {e}")
+
+                # Emit analytics event
+                if self.bot.analytics:
+                    await self.bot.analytics.emit_event(
+                        "account_linked",
+                        {
+                            "discord_user_id": link_state.discord_user_id,
+                            "prizepicks_user_id": prizepicks_user_id,
+                            "timestamp": discord.utils.utcnow().isoformat(),
+                        },
+                    )
+
+                logger.info(
+                    f"Account linked: discord_user_id={link_state.discord_user_id}, "
+                    f"prizepicks_user_id={prizepicks_user_id}"
                 )
 
-            logger.info(
-                f"Account linked: discord_user_id={link_state.discord_user_id}, "
-                f"prizepicks_user_id={prizepicks_user_id}"
-            )
+                return web.Response(
+                    text="Account successfully linked! You can now close this window.",
+                    status=200,
+                )
 
-            return web.Response(
-                text="Account successfully linked! You can now close this window.",
-                status=200,
-            )
+            except NotImplementedError as e:
+                logger.error(f"OAuth feature not yet implemented: {e}")
+                return web.Response(
+                    text="OAuth linking is not yet fully configured. Please contact support.",
+                    status=503,
+                )
 
         except Exception as e:
             logger.error(f"Error in OAuth callback: {e}", exc_info=True)
             return web.Response(
-                text="An error occurred during authorization",
+                text="An error occurred during authorization. Please try again.",
                 status=500,
             )
 
@@ -369,8 +441,8 @@ class AccountLinkingCog(commands.Cog):
         #   "code": code,
         #   "client_id": self.oauth_client_id,
         #   "client_secret": self.oauth_client_secret,
-        #    "redirect_uri": self.oauth_redirect_uri,
-        #    "grant_type": "authorization_code"
+        #   "redirect_uri": self.oauth_redirect_uri,
+        #   "grant_type": "authorization_code"
         # }
         raise NotImplementedError("Token exchange not yet implemented")
 
@@ -392,6 +464,6 @@ class AccountLinkingCog(commands.Cog):
         raise NotImplementedError("User ID retrieval not yet implemented")
 
 
-dync def setup(bot: commands.Bot) -> None:
+async def setup(bot: commands.Bot) -> None:
     """Load the cog."""
     await bot.add_cog(AccountLinkingCog(bot))

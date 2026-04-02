@@ -18,11 +18,12 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.event_models import GameDayChannel
+from src.utils.colors import PRIZEPICKS_PRIMARY
+from src.utils.embeds import success_embed, error_embed, info_embed, empty_state_embed
+from src.utils.validation import validate_datetime, validate_length, validate_non_empty
+from src.utils.views import ConfirmView
 
 logger = logging.getLogger(__name__)
-
-# PrizePicks brand purple
-PRIZEPICKS_COLOR = discord.Color.from_rgb(108, 43, 217)
 
 # Sports abbreviations for channel naming
 SPORT_EMOJI = {
@@ -110,18 +111,17 @@ class GameDayChannelsCog(commands.Cog):
             channels = result.scalars().all()
 
             if not channels:
-                embed = discord.Embed(
-                    title="No Game-Day Channels Today",
-                    description="No active games scheduled for today.",
-                    color=PRIZEPICKS_COLOR,
+                embed = empty_state_embed(
+                    "Game Day",
+                    "No game-day channels active",
+                    ["/gameday create"]
                 )
                 await ctx.followup.send(embed=embed)
                 return
 
-            embed = discord.Embed(
-                title="Today's Games",
-                color=PRIZEPICKS_COLOR,
-                timestamp=datetime.utcnow(),
+            embed = info_embed(
+                "Today's Games",
+                f"{len(channels)} game(s) scheduled"
             )
 
             for channel_record in channels:
@@ -133,8 +133,8 @@ class GameDayChannelsCog(commands.Cog):
                 )
 
                 embed.add_field(
-                    name=f"{emoji} {channel_record.event_name}",
-                    value=f"Channel: {channel_mention}\nStart: {start_time}",
+                    name=f"{emoji} {channel_record.event_name[:40]}",
+                    value=f"{channel_mention} • {start_time}",
                     inline=True,
                 )
 
@@ -142,12 +142,15 @@ class GameDayChannelsCog(commands.Cog):
 
         except Exception as e:
             logger.exception("Error listing game-day channels")
-            error_embed = discord.Embed(
-                title="Error Listing Channels",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "List Failed",
+                    "Could not retrieve channels",
+                    recovery_hint="Try again",
+                    error_code="GAMEDAY_LIST_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @gameday_group.command(
         name="create",
@@ -173,35 +176,64 @@ class GameDayChannelsCog(commands.Cog):
         await ctx.defer()
 
         try:
-            # Parse start time
-            try:
-                scheduled_start = datetime.fromisoformat(start_time)
-            except ValueError:
-                error_embed = discord.Embed(
-                    title="Invalid Time Format",
-                    description="Use ISO format: YYYY-MM-DD HH:MM",
-                    color=discord.Color.red(),
+            # Validate inputs
+            is_valid, error_msg = validate_length(event_name, 1, 50, "Event name")
+            if not is_valid:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Event", error_msg),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
+                return
+
+            is_valid, error_msg = validate_length(sport, 1, 20, "Sport")
+            if not is_valid:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Sport", error_msg),
+                    ephemeral=True,
+                )
+                return
+
+            # Parse start time
+            scheduled_start, error_msg = validate_datetime(start_time, "Start time")
+            if error_msg:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Time", error_msg),
+                    ephemeral=True,
+                )
+                return
+
+            # Confirm timezone and time
+            confirm_embed = info_embed(
+                "Confirm Game-Day Channel",
+                f"Creating for {scheduled_start.strftime('%I:%M %p UTC')}. Correct?"
+            )
+            view = ConfirmView()
+            await ctx.followup.send(embed=confirm_embed, view=view, ephemeral=True)
+
+            await view.wait()
+            if not view.result:
+                await ctx.followup.send("Cancelled", ephemeral=True)
                 return
 
             # Create Discord channel
             channel_name = self._format_channel_name(sport, event_name)
-            category = self._get_or_create_category(ctx.guild, self.GAMEDAY_CATEGORY)
+            category = await self._get_or_create_category(ctx.guild, self.GAMEDAY_CATEGORY)
 
             if not category:
-                error_embed = discord.Embed(
-                    title="Category Error",
-                    description="Could not create/find Game Day category.",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Category Error",
+                        "Could not create Game Day category",
+                        recovery_hint="Check permissions"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
             discord_channel = await ctx.guild.create_text_channel(
                 channel_name,
                 category=category,
-                topic=f"{sport.upper()} | {event_name} | Starts: {scheduled_start.strftime('%Y-%m-%d %H:%M')}",
+                topic=f"{sport.upper()} • {event_name} • {scheduled_start.strftime('%Y-%m-%d %H:%M UTC')}",
             )
 
             # Record in database
@@ -218,29 +250,30 @@ class GameDayChannelsCog(commands.Cog):
             self.db.add(gameday)
             await self.db.commit()
 
-            embed = discord.Embed(
-                title="Channel Created",
-                description=f"{discord_channel.mention}",
-                color=PRIZEPICKS_COLOR,
+            await ctx.followup.send(
+                embed=success_embed(
+                    "Channel Created",
+                    discord_channel.mention,
+                    fields=[
+                        ("Sport", sport.upper(), True),
+                        ("Event", event_name[:30], True),
+                        ("Start", scheduled_start.strftime("%Y-%m-%d %H:%M"), True),
+                    ]
+                ),
+                ephemeral=True,
             )
-            embed.add_field(name="Sport", value=sport.upper(), inline=True)
-            embed.add_field(name="Event", value=event_name, inline=True)
-            embed.add_field(
-                name="Start Time",
-                value=scheduled_start.strftime("%Y-%m-%d %H:%M"),
-                inline=True,
-            )
-
-            await ctx.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.exception("Error creating game-day channel")
-            error_embed = discord.Embed(
-                title="Error Creating Channel",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Creation Failed",
+                    "Could not create channel",
+                    recovery_hint="Try again",
+                    error_code="GAMEDAY_CREATE_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @gameday_group.command(
         name="archive",
@@ -265,12 +298,27 @@ class GameDayChannelsCog(commands.Cog):
             # Get Discord channel
             channel = ctx.guild.get_channel(channel_id)
             if not channel:
-                error_embed = discord.Embed(
-                    title="Channel Not Found",
-                    description=f"No channel found with ID: {channel_id}",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Not Found",
+                        f"No channel with ID: {channel_id}",
+                        recovery_hint="Check the ID with `/gameday list`"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
+                return
+
+            # Ask for confirmation
+            confirm_embed = info_embed(
+                "Archive Channel?",
+                f"Archive {channel.mention}? Sets it to read-only and cannot be undone.",
+            )
+            view = ConfirmView()
+            await ctx.followup.send(embed=confirm_embed, view=view, ephemeral=True)
+
+            await view.wait()
+            if not view.result:
+                await ctx.followup.send("Cancelled", ephemeral=True)
                 return
 
             # Update database record
@@ -289,7 +337,7 @@ class GameDayChannelsCog(commands.Cog):
                 await self.db.commit()
 
             # Move channel to archived category
-            archived_category = self._get_or_create_category(
+            archived_category = await self._get_or_create_category(
                 ctx.guild, self.ARCHIVED_CATEGORY
             )
             if archived_category:
@@ -303,21 +351,25 @@ class GameDayChannelsCog(commands.Cog):
                 }
             )
 
-            embed = discord.Embed(
-                title="Channel Archived",
-                description=f"{channel.mention} has been archived and set to read-only.",
-                color=PRIZEPICKS_COLOR,
+            await ctx.followup.send(
+                embed=success_embed(
+                    "Channel Archived",
+                    f"{channel.mention} is now read-only"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.exception("Error archiving game-day channel")
-            error_embed = discord.Embed(
-                title="Error Archiving Channel",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Archive Failed",
+                    "Could not archive channel",
+                    recovery_hint="Try again",
+                    error_code="GAMEDAY_ARCHIVE_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @tasks.loop(minutes=30)
     async def check_schedule(self) -> None:
@@ -376,7 +428,7 @@ class GameDayChannelsCog(commands.Cog):
                     try:
                         # Move to archived category
                         guild = discord_channel.guild
-                        archived_category = self._get_or_create_category(
+                        archived_category = await self._get_or_create_category(
                             guild, self.ARCHIVED_CATEGORY
                         )
                         if archived_category:
@@ -430,7 +482,7 @@ class GameDayChannelsCog(commands.Cog):
         full_name = f"{sport}-{name}"
         return full_name[:100]
 
-    def _get_or_create_category(
+    async def _get_or_create_category(
         self,
         guild: discord.Guild,
         category_name: str,
@@ -457,11 +509,10 @@ class GameDayChannelsCog(commands.Cog):
                 guild.default_role: discord.PermissionOverwrite(send_messages=True),
                 guild.me: discord.PermissionOverwrite(send_messages=True),
             }
-            category = guild.create_category(
+            category = await guild.create_category(
                 category_name,
                 overwrites=overwrites,
             )
-            # Note: This is async, should use await
             logger.info(f"Created category {category_name}")
             return category
         except Exception as e:

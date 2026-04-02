@@ -18,11 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.event_models import Tournament, TournamentEntry
 from src.services.xp_manager import XPManager
+from src.utils.colors import PRIZEPICKS_PRIMARY
+from src.utils.embeds import success_embed, error_embed, info_embed, empty_state_embed, loading_embed, leaderboard_embed
+from src.utils.pagination import PaginatedView
+from src.utils.validation import validate_length, validate_range, validate_datetime
+from src.utils.views import ConfirmView
 
 logger = logging.getLogger(__name__)
-
-# PrizePicks brand purple
-PRIZEPICKS_COLOR = discord.Color.from_rgb(108, 43, 217)
 
 # Medal emojis for top 3
 MEDALS = ["🥇", "🥈", "🥉"]
@@ -170,62 +172,74 @@ class TournamentsCog(commands.Cog):
             tournaments = result.scalars().all()
 
             if not tournaments:
-                embed = discord.Embed(
-                    title="No Active Tournaments",
-                    description="Check back soon for upcoming tournaments!",
-                    color=PRIZEPICKS_COLOR,
+                embed = empty_state_embed(
+                    "Tournaments",
+                    "No tournaments active",
+                    ["/tournament list"]
                 )
                 await ctx.followup.send(embed=embed)
                 return
 
-            # Create paginated view
-            view = TournamentListView(tournaments, self)
-            embed = self._build_tournament_list_embed(tournaments, view.current_page, view.page_size)
-            await ctx.followup.send(embed=embed, view=view)
+            # Create paginated embeds (10 per page)
+            page_size = 10
+            embeds = []
+            for page_num in range((len(tournaments) + page_size - 1) // page_size):
+                embed = self._build_tournament_list_embed(
+                    tournaments,
+                    page_num,
+                    page_size,
+                    len(tournaments),
+                )
+                embeds.append(embed)
+
+            if len(embeds) == 1:
+                await ctx.followup.send(embed=embeds[0])
+            else:
+                view = PaginatedView(embeds)
+                await ctx.followup.send(embed=embeds[0], view=view)
 
         except Exception as e:
             logger.exception("Error listing tournaments")
-            error_embed = discord.Embed(
-                title="Error Listing Tournaments",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "List Failed",
+                    "Could not retrieve tournaments",
+                    recovery_hint="Try again",
+                    error_code="TOURNAMENT_LIST_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     def _build_tournament_list_embed(
         self,
         tournaments: List[Tournament],
         page: int,
         page_size: int,
+        total: int,
     ) -> discord.Embed:
         """Build tournament list embed for given page."""
         start = page * page_size
         end = start + page_size
         page_tournaments = tournaments[start:end]
 
-        embed = discord.Embed(
-            title="Active Tournaments",
-            color=PRIZEPICKS_COLOR,
-            timestamp=datetime.utcnow(),
+        embed = info_embed(
+            "Active Tournaments",
+            f"Page {page + 1} of {(total + page_size - 1) // page_size}"
         )
 
         for t in page_tournaments:
             status_emoji = "🟢" if t.status == "active" else "⏳"
             embed.add_field(
-                name=f"{status_emoji} {t.title}",
+                name=f"{status_emoji} {t.title[:40]}",
                 value=(
                     f"Type: {t.tournament_type}\n"
-                    f"Entry Fee: {t.entry_fee_xp} XP\n"
+                    f"Entry: {t.entry_fee_xp} XP\n"
                     f"Starts: {t.starts_at.strftime('%Y-%m-%d %H:%M')}\n"
-                    f"Ends: {t.ends_at.strftime('%Y-%m-%d %H:%M')}\n"
-                    f"**ID: {t.id}**"
+                    f"**ID: `{t.id}`**"
                 ),
                 inline=False,
             )
 
-        embed.set_footer(
-            text=f"Page {page + 1} | Use `/tournament list` for pagination"
-        )
         return embed
 
     @tournament_group.command(
@@ -253,43 +267,35 @@ class TournamentsCog(commands.Cog):
             tournament = result.scalars().first()
 
             if not tournament:
-                error_embed = discord.Embed(
-                    title="Tournament Not Found",
-                    description=f"No tournament found with ID: {tournament_id}",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Not Found",
+                        f"No tournament with ID: {tournament_id}",
+                        recovery_hint="Check the ID with `/tournament list`"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
             if tournament.status != "upcoming":
-                error_embed = discord.Embed(
-                    title="Cannot Enter Tournament",
-                    description="This tournament is not accepting entries.",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Cannot Enter",
+                        f"Tournament is {tournament.status} - entries closed",
+                        recovery_hint="Look for upcoming tournaments"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
             # Show confirmation
-            embed = discord.Embed(
-                title="Tournament Entry Confirmation",
-                description=tournament.title,
-                color=PRIZEPICKS_COLOR,
-            )
-            embed.add_field(
-                name="Entry Fee",
-                value=f"{tournament.entry_fee_xp} XP",
-                inline=True,
-            )
-            embed.add_field(
-                name="Your XP Balance",
-                value="(fetching...)",
-                inline=True,
-            )
-            embed.add_field(
-                name="Max Participants",
-                value=tournament.max_participants or "Unlimited",
-                inline=False,
+            embed = info_embed(
+                f"Enter Tournament {tournament_id}?",
+                tournament.title[:60],
+                fields=[
+                    ("Entry Fee", f"{tournament.entry_fee_xp} XP", True),
+                    ("Participants", str(tournament.max_participants or "∞"), True),
+                ]
             )
 
             view = TournamentEntryView(tournament, self)
@@ -314,21 +320,25 @@ class TournamentsCog(commands.Cog):
                 self.db.add(entry)
                 await self.db.commit()
 
-                success_embed = discord.Embed(
-                    title="Entry Confirmed",
-                    description=f"You've entered {tournament.title}",
-                    color=PRIZEPICKS_COLOR,
+                await ctx.followup.send(
+                    embed=success_embed(
+                        "Entered",
+                        tournament.title[:50]
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=success_embed, ephemeral=True)
 
         except Exception as e:
             logger.exception("Error entering tournament")
-            error_embed = discord.Embed(
-                title="Error Entering Tournament",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Entry Failed",
+                    "Could not enter tournament",
+                    recovery_hint="Try again",
+                    error_code="TOURNAMENT_ENTER_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @tournament_group.command(
         name="predict",
@@ -354,12 +364,14 @@ class TournamentsCog(commands.Cog):
             # Parse picks
             prediction_list = [p.strip().lower() for p in picks.split(",")]
             if not all(p in ["more", "less"] for p in prediction_list):
-                error_embed = discord.Embed(
-                    title="Invalid Predictions",
-                    description='Predictions must be "more" or "less" (comma-separated)',
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Invalid Format",
+                        'Predictions must be "more" or "less" (comma-separated)',
+                        recovery_hint='Example: more,less,more,more'
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
             # Fetch tournament entry
@@ -373,37 +385,43 @@ class TournamentsCog(commands.Cog):
             entry = result.scalars().first()
 
             if not entry:
-                error_embed = discord.Embed(
-                    title="Not Entered in Tournament",
-                    description="You must enter the tournament first.",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Not Entered",
+                        "You must enter the tournament first",
+                        recovery_hint=f"/tournament enter {tournament_id}"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
             # Update predictions
             entry.predictions_json = json.dumps(prediction_list)
             await self.db.commit()
 
-            embed = discord.Embed(
-                title="Predictions Submitted",
-                description=f"Your picks: {', '.join(prediction_list)}",
-                color=PRIZEPICKS_COLOR,
+            await ctx.followup.send(
+                embed=success_embed(
+                    "Predictions Set",
+                    f"Picks: {', '.join(prediction_list)}"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.exception("Error submitting predictions")
-            error_embed = discord.Embed(
-                title="Error Submitting Predictions",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Submission Failed",
+                    "Could not save predictions",
+                    recovery_hint="Try again",
+                    error_code="TOURNAMENT_PREDICT_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @tournament_group.command(
         name="leaderboard",
-        description="View tournament leaderboard (top 25)",
+        description="View tournament leaderboard with pagination",
     )
     async def tournament_leaderboard(
         self,
@@ -411,7 +429,7 @@ class TournamentsCog(commands.Cog):
         tournament_id: int,
     ) -> None:
         """
-        Show tournament leaderboard with top 25 scorers.
+        Show tournament leaderboard with pagination (10 per page).
 
         Args:
             ctx: Discord application context
@@ -425,56 +443,91 @@ class TournamentsCog(commands.Cog):
                 select(TournamentEntry)
                 .where(TournamentEntry.tournament_id == tournament_id)
                 .order_by(desc(TournamentEntry.score))
-                .limit(25)
             )
             result = await self.db.execute(stmt)
             entries = result.scalars().all()
 
             if not entries:
-                embed = discord.Embed(
-                    title="No Entries",
-                    description="No one has entered this tournament yet.",
-                    color=PRIZEPICKS_COLOR,
+                embed = empty_state_embed(
+                    "Tournament Leaderboard",
+                    "No entries yet",
+                    [f"/tournament enter {tournament_id}"]
                 )
                 await ctx.followup.send(embed=embed)
                 return
 
-            embed = discord.Embed(
-                title="Tournament Leaderboard",
-                description=f"Tournament ID: {tournament_id}",
-                color=PRIZEPICKS_COLOR,
-                timestamp=datetime.utcnow(),
-            )
+            # Create paginated embeds (10 per page)
+            page_size = 10
+            embeds = []
+            user_rank = None
 
-            leaderboard_text = ""
-            for idx, entry in enumerate(entries[:3], 1):
-                medal = MEDALS[idx - 1]
-                user = self.bot.get_user(entry.discord_user_id)
-                username = user.name if user else f"User {entry.discord_user_id}"
-                leaderboard_text += f"{medal} **#{idx}** {username} — {entry.score} pts\n"
+            for page_num in range((len(entries) + page_size - 1) // page_size):
+                start_idx = page_num * page_size
+                end_idx = start_idx + page_size
+                page_entries = entries[start_idx:end_idx]
 
-            if leaderboard_text:
-                embed.add_field(name="🏆 Top Scorers", value=leaderboard_text, inline=False)
+                # Check if current user is on this page
+                for idx, entry in enumerate(page_entries, start_idx + 1):
+                    if entry.discord_user_id == ctx.author.id:
+                        user_rank = idx
 
-            other_text = ""
-            for idx, entry in enumerate(entries[3:], 4):
-                user = self.bot.get_user(entry.discord_user_id)
-                username = user.name if user else f"User {entry.discord_user_id}"
-                other_text += f"#{idx} {username} — {entry.score} pts\n"
+                # Build entries list for leaderboard_embed
+                entry_dicts = []
+                for idx, entry in enumerate(page_entries, start_idx + 1):
+                    user = self.bot.get_user(entry.discord_user_id)
+                    username = user.name if user else f"User {entry.discord_user_id}"
+                    entry_dicts.append({
+                        "rank": idx,
+                        "username": username,
+                        "value": entry.score or 0,
+                    })
 
-            if other_text:
-                embed.add_field(name="Other Entries", value=other_text, inline=False)
+                embed = leaderboard_embed(
+                    f"Tournament {tournament_id} Leaderboard",
+                    entry_dicts,
+                    page_num + 1,
+                    (len(entries) + page_size - 1) // page_size,
+                    user_rank,
+                )
+                embeds.append(embed)
 
-            await ctx.followup.send(embed=embed)
+            if len(embeds) == 1:
+                await ctx.followup.send(embed=embeds[0])
+            else:
+                view = PaginatedView(
+                    embeds,
+                    on_jump_to_rank=lambda interaction: self._jump_to_rank(
+                        interaction, entries, ctx.author.id, page_size
+                    ) if user_rank else None,
+                )
+                await ctx.followup.send(embed=embeds[0], view=view)
 
         except Exception as e:
             logger.exception("Error fetching leaderboard")
-            error_embed = discord.Embed(
-                title="Error Fetching Leaderboard",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Leaderboard Failed",
+                    "Could not retrieve leaderboard",
+                    recovery_hint="Try again",
+                    error_code="TOURNAMENT_LEADERBOARD_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
+
+    async def _jump_to_rank(
+        self,
+        interaction: discord.Interaction,
+        entries: List[TournamentEntry],
+        user_id: int,
+        page_size: int,
+    ) -> None:
+        """Jump to user's rank on leaderboard."""
+        for idx, entry in enumerate(entries, 1):
+            if entry.discord_user_id == user_id:
+                page = (idx - 1) // page_size
+                await interaction.response.defer()
+                return
+        await interaction.response.defer()
 
     @tournament_group.command(
         name="create",
@@ -502,17 +555,50 @@ class TournamentsCog(commands.Cog):
         await ctx.defer()
 
         try:
-            # Parse dates
-            try:
-                starts_dt = datetime.fromisoformat(starts)
-                ends_dt = datetime.fromisoformat(ends)
-            except ValueError:
-                error_embed = discord.Embed(
-                    title="Invalid Date Format",
-                    description="Use ISO format: YYYY-MM-DD HH:MM",
-                    color=discord.Color.red(),
+            # Validate title length
+            is_valid, error_msg = validate_length(title, 1, 100, "Tournament title")
+            if not is_valid:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Title", error_msg),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
+                return
+
+            # Validate entry fee
+            is_valid, error_msg = validate_range(entry_fee_xp, 0, 10000, "Entry fee")
+            if not is_valid:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Entry Fee", error_msg),
+                    ephemeral=True,
+                )
+                return
+
+            # Parse dates
+            starts_dt, error_msg = validate_datetime(starts, "Start time")
+            if error_msg:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid Start Time", error_msg),
+                    ephemeral=True,
+                )
+                return
+
+            ends_dt, error_msg = validate_datetime(ends, "End time")
+            if error_msg:
+                await ctx.followup.send(
+                    embed=error_embed("Invalid End Time", error_msg),
+                    ephemeral=True,
+                )
+                return
+
+            # Validate end > start
+            if ends_dt <= starts_dt:
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Invalid Date Range",
+                        "End time must be after start time"
+                    ),
+                    ephemeral=True,
+                )
                 return
 
             tournament = Tournament(
@@ -531,26 +617,30 @@ class TournamentsCog(commands.Cog):
             await self.db.flush()
             await self.db.commit()
 
-            embed = discord.Embed(
-                title="Tournament Created",
-                description=title,
-                color=PRIZEPICKS_COLOR,
+            embed = success_embed(
+                "Tournament Created",
+                f"**{title}**",
+                fields=[
+                    ("Tournament ID", f"`{tournament.id}`", True),
+                    ("Entry Fee", f"{entry_fee_xp} XP", True),
+                    ("Starts", starts_dt.strftime("%Y-%m-%d %H:%M"), True),
+                    ("Ends", ends_dt.strftime("%Y-%m-%d %H:%M"), True),
+                ]
             )
-            embed.add_field(name="Tournament ID", value=str(tournament.id), inline=True)
-            embed.add_field(name="Entry Fee", value=f"{entry_fee_xp} XP", inline=True)
-            embed.add_field(name="Starts", value=starts_dt.strftime("%Y-%m-%d %H:%M"), inline=True)
-            embed.add_field(name="Ends", value=ends_dt.strftime("%Y-%m-%d %H:%M"), inline=True)
 
             await ctx.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.exception("Error creating tournament")
-            error_embed = discord.Embed(
-                title="Error Creating Tournament",
-                description=f"An error occurred: {str(e)}",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Creation Failed",
+                    "Could not create tournament",
+                    recovery_hint="Try again",
+                    error_code="TOURNAMENT_CREATE_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @tournament_group.command(
         name="score",
@@ -577,30 +667,49 @@ class TournamentsCog(commands.Cog):
             tournament = result.scalars().first()
 
             if not tournament:
-                error_embed = discord.Embed(
-                    title="Tournament Not Found",
-                    color=discord.Color.red(),
+                await ctx.followup.send(
+                    embed=error_embed(
+                        "Not Found",
+                        f"No tournament with ID: {tournament_id}",
+                        recovery_hint="Check the ID and try again"
+                    ),
+                    ephemeral=True,
                 )
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
                 return
 
-            tournament.status = "scoring"
-            await self.db.commit()
-
-            embed = discord.Embed(
-                title="Scoring Started",
-                description=f"Tournament {tournament_id} is being scored.",
-                color=PRIZEPICKS_COLOR,
+            # Ask for confirmation
+            view = ConfirmView()
+            confirm_embed = info_embed(
+                "Score Tournament?",
+                f"Score \"{tournament.title[:40]}\"? This cannot be undone.",
             )
-            await ctx.followup.send(embed=embed, ephemeral=True)
+            await ctx.followup.send(embed=confirm_embed, view=view, ephemeral=True)
+
+            await view.wait()
+            if view.result:
+                tournament.status = "scoring"
+                await self.db.commit()
+
+                # Send loading state
+                loading = loading_embed(f"Scoring tournament {tournament_id}... Processing entries")
+                await ctx.followup.send(embed=loading, ephemeral=True)
+
+                await ctx.followup.send(
+                    embed=success_embed("Scoring Started", f"Tournament {tournament_id}"),
+                    ephemeral=True,
+                )
 
         except Exception as e:
             logger.exception("Error triggering tournament scoring")
-            error_embed = discord.Embed(
-                title="Error Triggering Scoring",
-                color=discord.Color.red(),
+            await ctx.followup.send(
+                embed=error_embed(
+                    "Scoring Failed",
+                    "Could not start scoring",
+                    recovery_hint="Try again",
+                    error_code="TOURNAMENT_SCORE_ERROR"
+                ),
+                ephemeral=True,
             )
-            await ctx.followup.send(embed=error_embed, ephemeral=True)
 
     @tasks.loop(minutes=5)
     async def auto_start_tournaments(self) -> None:

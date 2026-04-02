@@ -11,9 +11,19 @@ from collections import defaultdict
 
 import discord
 from discord.ext import commands, tasks
-import pytest
 
 from src.services.xp_manager import XPManager
+from src.utils.colors import get_tier_color
+from src.utils.embeds import (
+    success_embed,
+    error_embed,
+    info_embed,
+    empty_state_embed,
+    leaderboard_embed,
+    progress_bar,
+)
+from src.utils.pagination import PaginatedView
+from src.utils.views import ConfirmView
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +34,8 @@ class XPSystem(commands.Cog):
 
     Features:
     - Message listener with anti-spam and daily caps
-    - /xp â Show current XP and rank
-    - /leaderboard â View leaderboard (daily, weekly, monthly, all-time)
+    - /xp — Show current XP and rank
+    - /leaderboard — View leaderboard (daily, weekly, monthly, all-time)
     - Background task for XP decay and buffer flushing
     """
 
@@ -85,8 +95,20 @@ class XPSystem(commands.Cog):
 
         # Anti-spam: time since last award
         last_award = self._last_award_time.get(user_id)
-        if last_award and (current_time - last_award).total_seconds() < self.MIN_TIME_BETWEEN_AWARDS:
-            return
+        if last_award:
+            time_diff = (current_time - last_award).total_seconds()
+            if time_diff < self.MIN_TIME_BETWEEN_AWARDS:
+                # Send ephemeral cooldown feedback
+                try:
+                    seconds_left = int(self.MIN_TIME_BETWEEN_AWARDS - time_diff)
+                    embed = info_embed(
+                        "XP Cooldown",
+                        f"You just earned XP! Next eligible in {seconds_left} seconds"
+                    )
+                    await message.author.send(embed=embed, delete_after=10)
+                except discord.Forbidden:
+                    pass
+                return
 
         # Anti-spam: duplicate detection
         message_hash = hash(message.content.lower())
@@ -123,6 +145,16 @@ class XPSystem(commands.Cog):
             self._last_award_time[user_id] = current_time
             logger.debug(f"Awarded XP to user {user_id}: {msg}")
 
+            # Send success feedback
+            try:
+                embed = success_embed(
+                    "XP Awarded",
+                    f"✅ {self.xp_manager.XP_VALUES['message']} XP awarded for sharing entry"
+                )
+                await message.author.send(embed=embed, delete_after=15)
+            except discord.Forbidden:
+                pass
+
     @commands.slash_command(
         name="xp",
         description="Show your current XP, rank, and progress to next tier"
@@ -142,6 +174,17 @@ class XPSystem(commands.Cog):
         try:
             user_id = ctx.author.id
             xp_data = await self.xp_manager.get_xp(user_id)
+
+            # Check if user has no XP
+            if not xp_data or xp_data["balance"] == 0:
+                embed = empty_state_embed(
+                    "XP System",
+                    "XP is earned by chatting and completing activities in the community!",
+                    ["/xp view", "/leaderboard"]
+                )
+                await ctx.respond(embed=embed, ephemeral=True)
+                return
+
             rank_data = await self.xp_manager.get_rank(user_id)
             current_tier = xp_data["tier"]
             current_xp = xp_data["balance"]
@@ -153,64 +196,41 @@ class XPSystem(commands.Cog):
 
             if current_tier == "diamond":
                 progress_text = "Reached Diamond tier!"
-                progress_bar = "â" * 10
+                bar = progress_bar(100, 100)
             else:
                 next_tier = tier_keys[current_tier_idx + 1]
                 next_threshold = self.xp_manager.TIER_THRESHOLDS[next_tier]
                 progress = current_xp - current_threshold
                 needed = next_threshold - current_threshold
-                percentage = min(100, int((progress / needed) * 100))
-                filled = int(percentage / 10)
-                progress_bar = "â" * filled + "â" * (10 - filled)
+                bar = progress_bar(progress, needed)
                 progress_text = f"{progress:,} / {needed:,} XP to {next_tier.capitalize()}"
 
-            # Build embed
-            embed = discord.Embed(
-                title=f"XP Profile - {ctx.author.name}",
-                color=self._get_tier_color(current_tier),
-                timestamp=datetime.utcnow(),
+            # Build embed using utility function
+            tier_color = get_tier_color(current_tier)
+            embed = info_embed(
+                f"XP Profile - {ctx.author.name}",
+                f"**{current_tier.upper()}** Tier",
+                [
+                    ("Current XP", f"**{current_xp:,}**", True),
+                    ("Lifetime XP", f"**{xp_data['lifetime']:,}**", True),
+                    ("Rank", f"**#{rank_data['rank']}** ({rank_data['percentile']:.1f}th percentile)", False),
+                    ("Progress", f"{bar}\n{progress_text}", False),
+                ]
             )
-
-            embed.add_field(
-                name="Current Tier",
-                value=f"**{current_tier.upper()}**",
-                inline=True,
-            )
-
-            embed.add_field(
-                name="Current XP",
-                value=f"**{current_xp:,}**",
-                inline=True,
-            )
-
-            embed.add_field(
-                name="Lifetime XP",
-                value=f"**{xp_data['lifetime']:,}**",
-                inline=True,
-            )
-
-            embed.add_field(
-                name="Rank",
-                value=f"**#{rank_data['rank']}** ({rank_data['percentile']:.1f}th percentile)",
-                inline=False,
-            )
-
-            embed.add_field(
-                name="Progress",
-                value=f"{progress_bar}\n{progress_text}",
-                inline=False,
-            )
-
+            embed.color = tier_color
             embed.set_thumbnail(url=ctx.author.avatar.url)
 
-            await ctx.respond(embed=embed)
+            await ctx.respond(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error in xp command: {e}")
-            await ctx.respond(
-                "Error retrieving XP data. Please try again later.",
-                ephemeral=True,
+            embed = error_embed(
+                "XP Lookup Failed",
+                "Could not retrieve your XP data",
+                recovery_hint="Please try again in a moment",
+                error_code="XP_FETCH_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @commands.slash_command(
         name="leaderboard",
@@ -236,7 +256,7 @@ class XPSystem(commands.Cog):
         limit: int = 10,
     ) -> None:
         """
-        Display the XP leaderboard for a period.
+        Display the XP leaderboard for a period with pagination.
 
         Args:
             period: "daily", "weekly", "monthly", or "alltime"
@@ -253,14 +273,16 @@ class XPSystem(commands.Cog):
 
             leaderboard = lb_data["leaderboard"]
             if not leaderboard:
-                await ctx.respond(
-                    f"No leaderboard data available for {period}.",
-                    ephemeral=True,
+                embed = empty_state_embed(
+                    "XP Leaderboard",
+                    f"No leaderboard data available for {period}",
+                    ["/xp view", "/leaderboard"]
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
-            # Build leaderboard text
-            lb_text = ""
+            # Build leaderboard entries - sort by XP DESC, last earned ASC for tiebreaker
+            entries = []
             for entry in leaderboard:
                 try:
                     user = await self.bot.fetch_user(entry["user_id"])
@@ -268,15 +290,14 @@ class XPSystem(commands.Cog):
                 except discord.NotFound:
                     user_name = f"Unknown User ({entry['user_id']})"
 
-                medal = {1: "ð¥", 2: "ð¥", 3: "ð¥"}.get(entry["rank"], f"#{entry['rank']}")
-                lb_text += f"{medal} {user_name}: **{entry['xp']:,}** XP\n"
+                entries.append({
+                    "rank": entry["rank"],
+                    "username": user_name,
+                    "value": entry["xp"],
+                    "user_id": entry["user_id"],
+                })
 
-            # Highlight user's position
-            user_pos = lb_data.get("user_position")
-            if user_pos and user_pos["rank"] > limit:
-                lb_text += f"\nâ¦\n\nð **Your Position**: #{user_pos['rank']} ({user_pos['percentile']:.1f}th percentile)"
-
-            # Build embed
+            # Build period display
             period_display = {
                 "daily": "Daily",
                 "weekly": "Weekly",
@@ -284,21 +305,44 @@ class XPSystem(commands.Cog):
                 "alltime": "All-Time",
             }
 
-            embed = discord.Embed(
-                title=f"{period_display[period]} XP Leaderboard",
-                description=lb_text,
-                color=discord.Color.gold(),
-                timestamp=datetime.utcnow(),
+            # Get user position
+            user_pos = lb_data.get("user_position")
+
+            # Create embed using leaderboard_embed utility
+            embed = leaderboard_embed(
+                f"{period_display[period]} XP Leaderboard",
+                entries,
+                page=1,
+                total_pages=1,
+                user_rank=user_pos["rank"] if user_pos else None
             )
 
-            await ctx.respond(embed=embed)
+            # Create paginated view with jump to rank callback
+            async def on_jump_to_rank(interaction: discord.Interaction) -> None:
+                if user_pos and user_pos["rank"] > 0:
+                    await interaction.response.send_message(
+                        f"📍 Your rank: **#{user_pos['rank']}** with **{user_pos.get('xp', 0):,}** XP",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        "You don't have a ranking yet. Start earning XP!",
+                        ephemeral=True
+                    )
+
+            view = PaginatedView([embed], on_jump_to_rank=on_jump_to_rank)
+
+            await ctx.respond(embed=embed, view=view)
 
         except Exception as e:
             logger.error(f"Error in leaderboard command: {e}")
-            await ctx.respond(
-                "Error retrieving leaderboard. Please try again later.",
-                ephemeral=True,
+            embed = error_embed(
+                "Leaderboard Lookup Failed",
+                "Could not retrieve leaderboard data",
+                recovery_hint="Please try again in a moment",
+                error_code="LEADERBOARD_FETCH_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @tasks.loop(minutes=5)
     async def flush_xp_buffer(self) -> None:
@@ -338,24 +382,6 @@ class XPSystem(commands.Cog):
         """Wait for bot to be ready before starting decay task."""
         await self.bot.wait_until_ready()
 
-    @staticmethod
-    def _get_tier_color(tier: str) -> discord.Color:
-        """
-        Get Discord color for tier.
-
-        Args:
-            tier: Tier name ("bronze", "silver", "gold", "diamond")
-
-        Returns:
-            discord.Color object
-        """
-        colors = {
-            "bronze": discord.Color.from_rgb(205, 127, 50),
-            "silver": discord.Color.from_rgb(192, 192, 192),
-            "gold": discord.Color.from_rgb(255, 215, 0),
-            "diamond": discord.Color.from_rgb(185, 242, 255),
-        }
-        return colors.get(tier, discord.Color.default())
 
 
 def setup(bot: commands.Bot, xp_manager: XPManager) -> None:

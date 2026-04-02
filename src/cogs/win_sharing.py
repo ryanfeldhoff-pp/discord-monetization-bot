@@ -15,11 +15,16 @@ from discord.ext import commands, tasks
 from src.models.referral_models import WinShareLog
 from src.services.referral_manager import ReferralManager
 from src.services.xp_manager import XPManager
+from src.utils.colors import PRIZEPICKS_PRIMARY, SUCCESS, INFO
+from src.utils.embeds import (
+    success_embed,
+    error_embed,
+    info_embed,
+    empty_state_embed,
+)
+from src.utils.views import UnsubscribeView
 
 logger = logging.getLogger(__name__)
-
-# PrizePicks brand color
-PRIZEPICKS_PURPLE = 0x6C2BD9
 
 
 class WinShareView(discord.ui.View):
@@ -43,6 +48,7 @@ class WinShareView(discord.ui.View):
         label="Share to Channel",
         style=discord.ButtonStyle.primary,
         custom_id="share_channel",
+        emoji="📢",
     )
     async def share_channel(
         self,
@@ -66,8 +72,12 @@ class WinShareView(discord.ui.View):
             await interaction.channel.send(embed=embed)
 
             # Track share
+            embed_response = success_embed(
+                "Win Shared",
+                "Your entry is visible in this channel!",
+            )
             await interaction.response.send_message(
-                "Win shared to channel!",
+                embed=embed_response,
                 ephemeral=True,
             )
 
@@ -78,8 +88,14 @@ class WinShareView(discord.ui.View):
 
         except Exception as e:
             logger.error(f"Error sharing to channel: {e}", exc_info=True)
+            embed_response = error_embed(
+                "Sharing Failed",
+                "Could not share your win. Please try again.",
+                recovery_hint="Check that you have permission to post",
+                error_code="SHARE_FAILED",
+            )
             await interaction.response.send_message(
-                "Error sharing win. Please try again.",
+                embed=embed_response,
                 ephemeral=True,
             )
 
@@ -87,6 +103,7 @@ class WinShareView(discord.ui.View):
         label="Share to Social",
         style=discord.ButtonStyle.secondary,
         custom_id="share_social",
+        emoji="🔗",
     )
     async def share_social(
         self,
@@ -109,10 +126,12 @@ class WinShareView(discord.ui.View):
                 f"https://prizepicks.com"
             )
 
-            embed = discord.Embed(
-                title="Social Share Text",
-                description=f"Copy this to share on social media:\n\n```\n{social_text}\n```",
-                color=PRIZEPICKS_PURPLE,
+            embed = info_embed(
+                "Social Share Text",
+                "Copy this to share on social media:",
+                fields=[
+                    ("Share Template", f"```\n{social_text}\n```", False),
+                ],
             )
 
             await interaction.response.send_message(
@@ -124,8 +143,14 @@ class WinShareView(discord.ui.View):
 
         except Exception as e:
             logger.error(f"Error preparing social share: {e}", exc_info=True)
+            embed_response = error_embed(
+                "Preparation Failed",
+                "Could not prepare social share template.",
+                recovery_hint="Please try again in a moment",
+                error_code="SOCIAL_SHARE_ERROR",
+            )
             await interaction.response.send_message(
-                "Error preparing share. Please try again.",
+                embed=embed_response,
                 ephemeral=True,
             )
 
@@ -153,48 +178,28 @@ class WinShareEmbed:
         win_amount = win_data.get("amount", 0)
         picks = win_data.get("picks", [])
         entry_id = win_data.get("entry_id", "")
+        is_verified = win_data.get("is_verified", True)
 
-        embed = discord.Embed(
-            title=f"🎉 {user.name} Won! 🎉",
-            description=f"Just hit a win on PrizePicks!",
-            color=discord.Color.gold(),
-            timestamp=datetime.utcnow(),
-        )
+        # Picks preview (keep short for mobile)
+        picks_text = "\n".join([f"• {pick}" for pick in picks[:3]])
+        if len(picks) > 3:
+            picks_text += f"\n• +{len(picks) - 3} more"
 
-        # Win amount
-        embed.add_field(
-            name="Amount Won",
-            value=f"**${win_amount / 100:.2f}**",
-            inline=True,
-        )
+        # Verification flag
+        verification_note = "" if is_verified else "\n⚠️ Unverified | Verify with /link"
 
-        # Number of picks
-        embed.add_field(
-            name="Picks",
-            value=f"**{len(picks)}**",
-            inline=True,
-        )
-
-        # Picks preview
-        picks_text = "\n".join([f"• {pick}" for pick in picks[:5]])
-        if len(picks) > 5:
-            picks_text += f"\n• +{len(picks) - 5} more"
-
-        embed.add_field(
-            name="Picks",
-            value=picks_text or "No picks to display",
-            inline=False,
-        )
-
-        # Referral CTA
-        embed.add_field(
-            name="Want to Win Too?",
-            value=f"Use code **`{referral_code}`** when you join! 💪",
-            inline=False,
+        embed = success_embed(
+            f"{user.name} Won!",
+            f"Just hit a win on PrizePicks!{verification_note}",
+            fields=[
+                ("Amount Won", f"**${win_amount / 100:.2f}**", True),
+                ("Picks", f"**{len(picks)}**", True),
+                ("Entry Picks", picks_text or "No picks to display", False),
+                ("Want to Win Too?", f"Use code: ```\n{referral_code}\n```", False),
+            ],
         )
 
         embed.set_thumbnail(url=user.avatar.url if user.avatar else "")
-        embed.set_footer(text="PrizePicks Community")
 
         return embed
 
@@ -220,6 +225,7 @@ class PostWinDMView(discord.ui.View):
         label="Share Your Win",
         style=discord.ButtonStyle.primary,
         custom_id="share_win_button",
+        emoji="🚀",
     )
     async def share_win(
         self,
@@ -245,10 +251,9 @@ class PostWinDMView(discord.ui.View):
                 self.user_id,
             )
 
-            embed = discord.Embed(
-                title="Share Your Win",
-                description="How would you like to share?",
-                color=PRIZEPICKS_PURPLE,
+            embed = info_embed(
+                "Share Your Win",
+                "How would you like to share with the community?",
             )
 
             await interaction.response.send_message(
@@ -259,8 +264,14 @@ class PostWinDMView(discord.ui.View):
 
         except Exception as e:
             logger.error(f"Error in share win button: {e}", exc_info=True)
+            embed_response = error_embed(
+                "Dialog Failed",
+                "Could not open share dialog.",
+                recovery_hint="Please try again in a moment",
+                error_code="DIALOG_ERROR",
+            )
             await interaction.response.send_message(
-                "Error opening share dialog.",
+                embed=embed_response,
                 ephemeral=True,
             )
 
@@ -352,7 +363,7 @@ class WinSharingCog(commands.Cog):
         user_id: int,
     ) -> None:
         """
-        Show dialog to share latest win.
+        Show dialog to share latest win with verification check.
 
         Args:
             ctx: Discord application context
@@ -363,56 +374,59 @@ class WinSharingCog(commands.Cog):
             latest_win = await self.referral_manager.get_latest_win(user_id)
 
             if not latest_win:
-                embed = discord.Embed(
-                    title="No Recent Wins",
-                    description="You don't have any recent wins to share.",
-                    color=PRIZEPICKS_PURPLE,
+                embed = empty_state_embed(
+                    "Wins",
+                    "You don't have any recent wins to share.",
+                    ["/share stats", "/referral code"],
                 )
                 await ctx.respond(embed=embed, ephemeral=True)
                 return
 
-            # Get referral code
+            # Check if account is linked/verified
             referral_data = (
                 await self.referral_manager.get_or_create_referral_code(user_id)
             )
-            referral_code = referral_data.get("code", "UNKNOWN")
+            is_verified = referral_data is not None
+            referral_code = referral_data.get("code", "UNKNOWN") if referral_data else "UNKNOWN"
+
+            if not is_verified:
+                embed = error_embed(
+                    "Account Not Linked",
+                    "You need to link your PrizePicks account to share wins.",
+                    recovery_hint="Use /link to connect your account",
+                    error_code="ACCOUNT_NOT_LINKED",
+                )
+                await ctx.respond(embed=embed, ephemeral=True)
+                return
 
             # Create view
             view = WinShareView(latest_win, referral_code, user_id)
 
             # Create embed
-            embed = discord.Embed(
-                title="Share Your Win",
-                description="Choose how you'd like to share",
-                color=PRIZEPICKS_PURPLE,
-                timestamp=datetime.utcnow(),
-            )
-
             win_amount = latest_win.get("amount", 0)
             picks = latest_win.get("picks", [])
 
-            embed.add_field(
-                name="Win Amount",
-                value=f"**${win_amount / 100:.2f}**",
-                inline=True,
+            embed = info_embed(
+                "Share Your Win",
+                "Choose how you'd like to share with the community",
+                fields=[
+                    ("Win Amount", f"**${win_amount / 100:.2f}**", True),
+                    ("Picks", f"**{len(picks)}**", True),
+                    ("Your Code", f"```\n{referral_code}\n```", False),
+                ],
             )
-
-            embed.add_field(
-                name="Picks",
-                value=f"**{len(picks)}**",
-                inline=True,
-            )
-
-            embed.set_footer(text="PrizePicks Community")
 
             await ctx.respond(embed=embed, view=view)
 
         except Exception as e:
             logger.error(f"Error showing share dialog: {e}", exc_info=True)
-            await ctx.respond(
-                "Error retrieving your latest win.",
-                ephemeral=True,
+            embed = error_embed(
+                "Error",
+                "Could not retrieve your latest win.",
+                recovery_hint="Please try again in a moment",
+                error_code="WIN_RETRIEVAL_ERROR",
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     async def _show_share_stats(
         self,
@@ -429,51 +443,22 @@ class WinSharingCog(commands.Cog):
         try:
             stats = await self.referral_manager.get_win_share_stats(user_id)
 
-            if not stats:
-                embed = discord.Embed(
-                    title="No Share Data",
-                    description="You haven't shared any wins yet.",
-                    color=PRIZEPICKS_PURPLE,
+            if not stats or stats.get("total_shares", 0) == 0:
+                embed = empty_state_embed(
+                    "Win Shares",
+                    "You haven't shared any wins yet.",
+                    ["/share win", "/referral code"],
                 )
                 await ctx.respond(embed=embed, ephemeral=True)
                 return
-
-            embed = discord.Embed(
-                title="Your Win Share Performance",
-                color=PRIZEPICKS_PURPLE,
-                timestamp=datetime.utcnow(),
-            )
 
             total_shares = stats.get("total_shares", 0)
             total_clicks = stats.get("total_clicks", 0)
             total_conversions = stats.get("total_conversions", 0)
 
-            embed.add_field(
-                name="Total Shares",
-                value=f"**{total_shares}**",
-                inline=True,
-            )
-
-            embed.add_field(
-                name="Total Clicks",
-                value=f"**{total_clicks}**",
-                inline=True,
-            )
-
-            embed.add_field(
-                name="Conversions",
-                value=f"**{total_conversions}**",
-                inline=True,
-            )
-
             # Click-through rate
             ctr = (
                 (total_clicks / total_shares * 100) if total_shares > 0 else 0
-            )
-            embed.add_field(
-                name="Click-Through Rate",
-                value=f"**{ctr:.1f}%**",
-                inline=False,
             )
 
             # Conversion rate
@@ -482,21 +467,30 @@ class WinSharingCog(commands.Cog):
                 if total_clicks > 0
                 else 0
             )
-            embed.add_field(
-                name="Conversion Rate",
-                value=f"**{cr:.1f}%**",
-                inline=False,
+
+            embed = info_embed(
+                "Your Win Share Performance",
+                "How your shared wins are performing",
+                fields=[
+                    ("Total Shares", f"**{total_shares}**", True),
+                    ("Total Clicks", f"**{total_clicks}**", True),
+                    ("Conversions", f"**{total_conversions}**", True),
+                    ("Click-Through Rate", f"**{ctr:.1f}%**", False),
+                    ("Conversion Rate", f"**{cr:.1f}%**", False),
+                ],
             )
 
-            embed.set_footer(text="PrizePicks Community")
             await ctx.respond(embed=embed)
 
         except Exception as e:
             logger.error(f"Error showing share stats: {e}", exc_info=True)
-            await ctx.respond(
-                "Error retrieving stats.",
-                ephemeral=True,
+            embed = error_embed(
+                "Error",
+                "Could not retrieve your stats.",
+                recovery_hint="Please try again in a moment",
+                error_code="STATS_RETRIEVAL_ERROR",
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     async def _show_share_settings(
         self,
@@ -626,33 +620,26 @@ class WinSharingCog(commands.Cog):
                         referral_code = referral_data.get("code", "UNKNOWN")
 
                         # Create DM embed
-                        embed = discord.Embed(
-                            title="You Won on PrizePicks!",
-                            description="Congratulations on your win!",
-                            color=discord.Color.gold(),
-                            timestamp=datetime.utcnow(),
-                        )
-
                         win_amount = win_data.get("amount", 0)
-                        embed.add_field(
-                            name="Amount Won",
-                            value=f"**${win_amount / 100:.2f}**",
-                            inline=True,
-                        )
-
                         picks = win_data.get("picks", [])
-                        embed.add_field(
-                            name="Picks",
-                            value=f"**{len(picks)}**",
-                            inline=True,
+
+                        embed = success_embed(
+                            "You Won on PrizePicks!",
+                            "Congratulations on your win!",
+                            fields=[
+                                ("Amount Won", f"**${win_amount / 100:.2f}**", True),
+                                ("Picks", f"**{len(picks)}**", True),
+                                ("Your Code", f"```\n{referral_code}\n```", False),
+                            ],
                         )
 
-                        # Create view
+                        # Create view with unsubscribe option
                         view = PostWinDMView(user_id, referral_code, win_data)
+                        unsubscribe_view = UnsubscribeView(user_id, "win_alerts")
 
-                        embed.set_footer(text="PrizePicks Community")
-
+                        # Combine views or send separately
                         await user.send(embed=embed, view=view)
+                        await user.send(view=unsubscribe_view)
 
                         logger.info(f"Sent post-win DM to user {user_id}")
 

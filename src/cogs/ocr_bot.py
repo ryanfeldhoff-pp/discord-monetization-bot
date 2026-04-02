@@ -7,6 +7,7 @@ and generates tailable entry links with confidence scoring.
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 import discord
@@ -15,6 +16,7 @@ from discord.ext import commands
 from src.services.analytics import AnalyticsService
 from src.services.ocr_service import OCRService, OCRProvider
 from src.services.prizepicks_api import PrizepicksAPIClient
+from src.utils.embeds import info_embed, error_embed, success_embed
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +62,9 @@ class OCRConfirmationView(discord.ui.View):
                 },
             )
 
-        embed = discord.Embed(
-            title="Opening Entry",
-            description="Click the button to open in PrizePicks",
-            color=discord.Color.green(),
+        embed = success_embed(
+            "Entry Confirmed",
+            "Click the button to open in PrizePicks",
         )
 
         view = discord.ui.View()
@@ -76,6 +77,33 @@ class OCRConfirmationView(discord.ui.View):
         )
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="Report Error", style=discord.ButtonStyle.secondary)
+    async def report_error_button(
+        self,
+        button: discord.ui.Button,
+        interaction: discord.Interaction,
+    ) -> None:
+        """Handle error reporting."""
+        if self.analytics:
+            await self.analytics.emit_event(
+                "ocr_match",
+                {
+                    "discord_user_id": interaction.user.id,
+                    "confidence": self.confidence,
+                    "action": "reported_error",
+                    "channel_id": interaction.channel_id,
+                    "guild_id": interaction.guild_id,
+                    "timestamp": discord.utils.utcnow().isoformat(),
+                },
+            )
+
+        embed = info_embed(
+            "Error Reported",
+            "Thank you for reporting! Our team will review this scan.",
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Dismiss", style=discord.ButtonStyle.red)
     async def dismiss_button(
@@ -129,7 +157,7 @@ class OCRBotCog(commands.Cog):
 
         Args:
             message: Discord message object
-       """
+        """
         # Ignore bot messages
         if message.author.bot:
             return
@@ -243,7 +271,7 @@ class OCRBotCog(commands.Cog):
             try:
                 ocr_result = await asyncio.wait_for(
                     self.ocr_service.extract_text(image_bytes),
-                    timeout=OCR_TIMEOUT = 5
+                    timeout=OCR_TIMEOUT,
                 )
             except asyncio.TimeoutError:
                 logger.warning(f"OCR timeout for user {user_id}")
@@ -263,17 +291,24 @@ class OCRBotCog(commands.Cog):
                 await processing_msg.delete()
                 return
 
-            # Create embed with match result
-            embed = discord.Embed(
-                title="Entry Detected",
-                description=f"Confidence: {match_result['confidence']:.0%}",
-                color=discord.Color.purple(),
-            )
+            # Interpret confidence level
+            confidence_pct = match_result['confidence'] * 100
+            if confidence_pct >= 95:
+                confidence_label = "Very High"
+            elif confidence_pct >= 80:
+                confidence_label = "High"
+            elif confidence_pct >= 70:
+                confidence_label = "Medium"
+            else:
+                confidence_label = "Low"
 
-            embed.add_field(
-                name="Matched Props",
-                value=match_result.get("summary", ""),
-                inline=False,
+            # Create embed with match result
+            embed = info_embed(
+                "Entry Detected",
+                f"Confidence: {confidence_label} ({confidence_pct:.0f}%)",
+                [
+                    ("Matched Props", match_result.get("summary", ""), False),
+                ]
             )
 
             # Create confirmation view
@@ -291,9 +326,16 @@ class OCRBotCog(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error processing screenshot: {e}", exc_info=True)
+            embed = error_embed(
+                "OCR Processing Failed",
+                "An error occurred while processing the screenshot",
+                recovery_hint="Please try uploading a clearer image",
+                error_code="OCR_PROCESS_ERROR"
+            )
             try:
                 await processing_msg.delete()
-            except:
+                await channel.send(embed=embed, delete_after=30)
+            except Exception:
                 pass
 
     async def _match_projections(self, extracted_text: str) -> Optional[dict]:
@@ -321,11 +363,6 @@ class OCRBotCog(commands.Cog):
         except Exception as e:
             logger.error(f"Error matching projections: {e}", exc_info=True)
             return None
-
-
-# OCR Service abstraction (can be expanded)
-import os
-
 
 
 async def setup(bot: commands.Bot) -> None:

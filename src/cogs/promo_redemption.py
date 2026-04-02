@@ -15,6 +15,13 @@ from sqlalchemy import select, and_
 
 from src.services.xp_manager import XPManager
 from src.models.xp_models import Redemption, RedemptionCounter, AccountLink
+from src.utils.embeds import (
+    success_embed,
+    error_embed,
+    info_embed,
+    empty_state_embed,
+)
+from src.utils.colors import PRIZEPICKS_PRIMARY
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +31,8 @@ class PromoRedemption(commands.Cog):
     XP-to-Promo code redemption system.
 
     Features:
-    - /redeem â Browse and redeem items
-    - /redeem history â View past redemptions
+    - /redeem — Browse and redeem items
+    - /redeem history — View past redemptions
     - Atomic transactions with rollback
     - Monthly limits per tier
     - Requires linked PrizePicks account
@@ -97,20 +104,15 @@ class PromoRedemption(commands.Cog):
             current_tier = xp_data["tier"]
             current_xp = xp_data["balance"]
 
-            # Build catalog embed
-            embed = discord.Embed(
-                title="Redeem XP for Rewards",
-                description=f"Your balance: **{current_xp:,} XP**",
-                color=discord.Color.purple(),
-                timestamp=datetime.utcnow(),
-            )
-
             can_redeem, limit_msg = await self.xp_manager.can_redeem(user_id, current_tier)
+
+            # Build catalog embed with fields
+            fields = []
 
             for item_id, item in self.CATALOG.items():
                 affordable = current_xp >= item["xp_cost"]
-                check = "â" if affordable else "â"
-                status = "â Can redeem" if affordable else "â Not enough XP"
+                check = "✓" if affordable else "✗"
+                status = "✓ Can redeem" if affordable else "✗ Not enough XP"
 
                 value = (
                     f"{item['description']}\n"
@@ -118,17 +120,16 @@ class PromoRedemption(commands.Cog):
                     f"**Status:** {status}"
                 )
 
-                embed.add_field(
-                    name=f"{check} {item['name']}",
-                    value=value,
-                    inline=False,
-                )
+                fields.append((f"{check} {item['name']}", value, False))
 
-            embed.add_field(
-                name="Monthly Limit",
-                value=f"{limit_msg}",
-                inline=False,
+            fields.append(("Monthly Limit", limit_msg, False))
+
+            embed = info_embed(
+                "Redeem XP for Rewards",
+                f"Your balance: **{current_xp:,} XP**",
+                fields,
             )
+            embed.color = PRIZEPICKS_PRIMARY
 
             # Create view with redeem buttons
             view = RedeemView(
@@ -145,10 +146,13 @@ class PromoRedemption(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in redeem command: {e}")
-            await ctx.respond(
-                "Error loading redemption catalog. Please try again later.",
-                ephemeral=True,
+            embed = error_embed(
+                "Catalog Load Failed",
+                "An error occurred while loading the redemption catalog",
+                recovery_hint="Please try again in a moment",
+                error_code="CATALOG_LOAD_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @commands.slash_command(
         name="redeem_history",
@@ -180,52 +184,56 @@ class PromoRedemption(commands.Cog):
             redemptions = result.scalars().all()
 
             if not redemptions:
-                await ctx.respond(
-                    "You haven't redeemed any items yet.",
-                    ephemeral=True,
+                embed = empty_state_embed(
+                    "Your Redemption History",
+                    "You haven't redeemed any items yet",
+                    ["/redeem"]
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
                 return
 
-            embed = discord.Embed(
-                title="Your Redemption History",
-                color=discord.Color.purple(),
-                timestamp=datetime.utcnow(),
-            )
+            fields = []
 
             for redemption in redemptions:
                 item = self.CATALOG.get(redemption.item_id, {})
                 item_name = item.get("name", "Unknown Item")
                 status_emoji = {
-                    "completed": "â",
-                    "pending": "â³",
-                    "failed": "â",
+                    "completed": "✓",
+                    "pending": "⏳",
+                    "failed": "✗",
                 }
                 status_str = status_emoji.get(redemption.status, "?")
 
                 value = (
                     f"**Item:** {item_name}\n"
                     f"**Cost:** {redemption.xp_cost:,} XP\n"
-                    f"**Status:** î {redemption.status.title()}\n"
+                    f"**Status:** {status_str} {redemption.status.title()}\n"
                     f"**Date:** <t:{int(redemption.redeemed_at.timestamp())}:R>"
                 )
 
                 if redemption.promo_code:
                     value += f"\n**Code:** `{redemption.promo_code}`"
 
-                embed.add_field(
-                    name=f"{status_str} {item_name}",
-                    value=value,
-                    inline=False,
-                )
+                fields.append((f"{status_str} {item_name}", value, False))
+
+            embed = info_embed(
+                "Your Redemption History",
+                f"Your recent redemptions (showing {len(redemptions)} of your total)",
+                fields,
+            )
+            embed.color = PRIZEPICKS_PRIMARY
 
             await ctx.respond(embed=embed)
 
         except Exception as e:
             logger.error(f"Error in redeem history command: {e}")
-            await ctx.respond(
-                "Error retrieving redemption history. Please try again later.",
-                ephemeral=True,
+            embed = error_embed(
+                "History Load Failed",
+                "An error occurred while retrieving your redemption history",
+                recovery_hint="Please try again in a moment",
+                error_code="HISTORY_LOAD_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     async def _send_link_account_prompt(self, ctx: discord.ApplicationContext) -> None:
         """
@@ -234,19 +242,12 @@ class PromoRedemption(commands.Cog):
         Args:
             ctx: Application context
         """
-        embed = discord.Embed(
-            title="Account Not Linked",
-            description="You need to link your PrizePicks account to redeem rewards.",
-            color=discord.Color.orange(),
-        )
-
-        embed.add_field(
-            name="How to Link",
-            value=(
-                "Use `/link_account` to connect your PrizePicks account.\n"
-                "This is a one-time setup to enable redemptions."
-            ),
-            inline=False,
+        embed = info_embed(
+            "Account Not Linked",
+            "You need to link your PrizePicks account to redeem rewards.",
+            [
+                ("How to Link", "Use `/link` to connect your PrizePicks account.\nThis is a one-time setup to enable redemptions.", False),
+            ]
         )
 
         await ctx.respond(embed=embed, ephemeral=True)
@@ -425,25 +426,25 @@ class RedeemView(discord.ui.View):
         )
 
         if success:
-            embed = discord.Embed(
-                title="Redemption Successful!",
-                description=message,
-                color=discord.Color.green(),
-            )
-
+            fields = []
             if promo_code:
-                embed.add_field(
-                    name="Promo Code",
-                    value=f"`{promo_code}`\n\n*Copy this code at checkout*",
-                    inline=False,
-                )
+                fields.append(("Promo Code", f"`{promo_code}`\n\n*Copy this code at checkout*", False))
+
+            embed = success_embed(
+                "Redemption Successful!",
+                message,
+                fields,
+            )
 
             await interaction.followup.send(embed=embed, ephemeral=True)
         else:
-            await interaction.followup.send(
-                f"Redemption failed: {message}",
-                ephemeral=True,
+            embed = error_embed(
+                "Redemption Failed",
+                message,
+                recovery_hint="Please check your XP balance and try again",
+                error_code="REDEMPTION_ERROR"
             )
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 def setup(bot: commands.Bot, xp_manager: XPManager, db_session) -> None:

@@ -13,6 +13,8 @@ import discord
 from discord.ext import commands, tasks
 
 from src.services.xp_manager import XPManager
+from src.utils.colors import get_tier_color
+from src.utils.embeds import success_embed, warning_embed, info_embed, error_embed
 
 logger = logging.getLogger(__name__)
 
@@ -115,59 +117,47 @@ class TieredRoles(commands.Cog):
             current_tier_idx = tier_keys.index(current_tier)
             current_threshold = self.xp_manager.TIER_THRESHOLDS[current_tier]
 
-            embed = discord.Embed(
-                title=f"Tier Status - {ctx.author.name}",
-                color=discord.Color.from_rgb(
-                    *self._hex_to_rgb(self.TIER_ROLES[current_tier]["color"])
-                ),
-                timestamp=datetime.utcnow(),
-            )
-
-            # Current tier info
-            embed.add_field(
-                name="Current Tier",
-                value=f"**{current_tier.upper()}** {self._get_tier_emoji(current_tier)}",
-                inline=False,
-            )
-
             # Progress bar
             if current_tier == "diamond":
                 progress_text = "You've reached the highest tier!"
-                progress_bar = "â" * 10
+                from src.utils.embeds import progress_bar
+                bar = progress_bar(100, 100)
             else:
                 next_tier = tier_keys[current_tier_idx + 1]
                 next_threshold = self.xp_manager.TIER_THRESHOLDS[next_tier]
                 progress = current_xp - current_threshold
                 needed = next_threshold - current_threshold
-                percentage = min(100, int((progress / needed) * 100))
-                filled = int(percentage / 10)
-                progress_bar = "â" * filled + "â" * (10 - filled)
+                from src.utils.embeds import progress_bar
+                bar = progress_bar(progress, needed)
                 progress_text = f"{progress:,} / {needed:,} XP to **{next_tier.upper()}**"
-
-            embed.add_field(
-                name="Progress to Next Tier",
-                value=f"{progress_bar}\n{progress_text}",
-                inline=False,
-            )
 
             # Unlocked perks
             perks = self.TIER_PERKS[current_tier]
-            embed.add_field(
-                name="Unlocked Perks",
-                value="\n".join(f"â {perk}" for perk in perks),
-                inline=False,
-            )
 
+            tier_color = get_tier_color(current_tier)
+
+            embed = info_embed(
+                f"Tier Status - {ctx.author.name}",
+                f"**{current_tier.upper()}** {self._get_tier_emoji(current_tier)}",
+                [
+                    ("Progress to Next Tier", f"{bar}\n{progress_text}", False),
+                    ("Unlocked Perks", "\n".join(f"✓ {perk}" for perk in perks), False),
+                ]
+            )
+            embed.color = tier_color
             embed.set_thumbnail(url=ctx.author.avatar.url)
 
-            await ctx.respond(embed=embed)
+            await ctx.respond(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error in tier command: {e}")
-            await ctx.respond(
-                "Error retrieving tier data. Please try again later.",
-                ephemeral=True,
+            embed = error_embed(
+                "Tier Lookup Failed",
+                "Could not retrieve your tier data",
+                recovery_hint="Please try again in a moment",
+                error_code="TIER_LOOKUP_ERROR"
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @tasks.loop(minutes=5)
     async def check_tier_updates(self) -> None:
@@ -301,26 +291,17 @@ class TieredRoles(commands.Cog):
             new_tier: New tier
         """
         try:
-            embed = discord.Embed(
-                title=f"Congratulations! You've reached {new_tier.upper()} tier!",
-                description="You've unlocked new perks and rewards.",
-                color=self.TIER_ROLES[new_tier]["color"],
-            )
+            tier_color = get_tier_color(new_tier)
 
-            embed.add_field(
-                name="New Perks Unlocked",
-                value="\n".join(f"â {perk}" for perk in self.TIER_PERKS[new_tier]),
-                inline=False,
+            embed = success_embed(
+                f"You've reached {new_tier.upper()} tier!",
+                "You've unlocked new perks and rewards.",
+                [
+                    ("New Perks Unlocked", "\n".join(f"✓ {perk}" for perk in self.TIER_PERKS[new_tier]), False),
+                    ("Next Steps", "Check out the new channels you now have access to!\nUse `/redeem` to see what rewards you can claim.", False),
+                ]
             )
-
-            embed.add_field(
-                name="Next Steps",
-                value=(
-                    "Check out the new channels you now have access to!\n"
-                    "Use `/redeem` to see what rewards you can claim."
-                ),
-                inline=False,
-            )
+            embed.color = tier_color
 
             await member.send(embed=embed)
 
@@ -418,10 +399,10 @@ class TieredRoles(commands.Cog):
             Emoji string
         """
         emojis = {
-            "bronze": "ð¥",
-            "silver": "ð¥",
-            "gold": "ð¥",
-            "diamond": "ð",
+            "bronze": "🥉",
+            "silver": "🥈",
+            "gold": "🥇",
+            "diamond": "💎",
         }
         return emojis.get(tier, "")
 

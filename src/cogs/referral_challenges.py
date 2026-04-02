@@ -6,6 +6,7 @@ Handles community-wide referral challenges with FTD tracking and rewards.
 
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -15,11 +16,19 @@ from discord.ext import commands, tasks
 from src.models.referral_models import ReferralChallenge
 from src.services.referral_manager import ReferralManager
 from src.services.xp_manager import XPManager
+from src.utils.colors import PRIZEPICKS_PRIMARY, SUCCESS, ERROR, WARNING
+from src.utils.embeds import (
+    success_embed,
+    error_embed,
+    info_embed,
+    empty_state_embed,
+    loading_embed,
+    progress_bar,
+)
+from src.utils.validation import validate_positive_int, validate_range
+from src.utils.error_handler import ValidationError
 
 logger = logging.getLogger(__name__)
-
-# PrizePicks brand color
-PRIZEPICKS_PURPLE = 0x6C2BD9
 
 
 class ChallengeProgressEmbed:
@@ -44,35 +53,11 @@ class ChallengeProgressEmbed:
         current = challenge.get("current_count", 0)
         target = challenge.get("target_count", 0)
         status = challenge.get("status", "active")
-        starts_at = challenge.get("starts_at")
         ends_at = challenge.get("ends_at")
         reward_config = challenge.get("reward_config", {})
 
-        # Calculate progress
-        percentage = min(100, int((current / target * 100) if target > 0 else 0))
-        filled = int(percentage / 10)
-        progress_bar = "▓" * filled + "░" * (10 - filled)
-
-        embed = discord.Embed(
-            title=title,
-            description=f"Community referral challenge in progress",
-            color=PRIZEPICKS_PURPLE,
-            timestamp=datetime.utcnow(),
-        )
-
-        # Progress
-        embed.add_field(
-            name="Progress",
-            value=f"{progress_bar} {percentage}%",
-            inline=False,
-        )
-
-        # Target
-        embed.add_field(
-            name="Target",
-            value=f"**{current:,} / {target:,}** FTDs",
-            inline=True,
-        )
+        # Calculate progress bar with overflow indicator
+        bar = progress_bar(current, target, length=10)
 
         # Status
         status_emoji = {
@@ -81,41 +66,41 @@ class ChallengeProgressEmbed:
             "completed": "✅",
             "failed": "❌",
         }
-        embed.add_field(
-            name="Status",
-            value=f"{status_emoji.get(status, '⚪')} {status.title()}",
-            inline=True,
-        )
 
         # Time remaining
+        time_str = ""
         if ends_at:
             time_left = ends_at - datetime.utcnow()
-            days = time_left.days
-            hours = time_left.seconds // 3600
-            time_str = f"{days}d {hours}h remaining"
-            embed.add_field(
-                name="Time Remaining",
-                value=time_str,
-                inline=True,
-            )
+            if time_left.total_seconds() > 0:
+                days = time_left.days
+                hours = time_left.seconds // 3600
+                time_str = f"{days}d {hours}h remaining"
+            else:
+                time_str = "Challenge ended"
 
         # Rewards
+        reward_text = "Rewards:\n"
         if reward_config:
-            reward_text = "Rewards:\n"
             if "free_entries" in reward_config:
                 reward_text += f"• {reward_config['free_entries']} Free Entries\n"
             if "xp_bonus" in reward_config:
                 reward_text += f"• {reward_config['xp_bonus']:,} XP Bonus\n"
             if "special_role" in reward_config:
                 reward_text += f"• Special Role Badge\n"
+        else:
+            reward_text = "TBD"
 
-            embed.add_field(
-                name="Rewards for Completion",
-                value=reward_text.strip(),
-                inline=False,
-            )
-
-        embed.set_footer(text="PrizePicks Community")
+        embed = info_embed(
+            title,
+            "Community referral challenge in progress",
+            fields=[
+                ("Progress", bar, False),
+                ("Target", f"**{current:,} / {target:,}** FTDs", True),
+                ("Status", f"{status_emoji.get(status, '⚪')} {status.title()}", True),
+                ("Time Remaining", time_str or "N/A", True),
+                ("Rewards for Completion", reward_text.strip(), False),
+            ],
+        )
 
         return embed
 
@@ -134,37 +119,27 @@ class ChallengeCompletedEmbed:
         Returns:
             discord.Embed: Formatted embed
         """
-        embed = discord.Embed(
-            title="🎉 Challenge Complete! 🎉",
-            description=f"The community reached the goal for:\n**{challenge.get('title')}**",
-            color=discord.Color.green(),
-            timestamp=datetime.utcnow(),
-        )
-
         current = challenge.get("current_count", 0)
         target = challenge.get("target_count", 0)
 
-        embed.add_field(
-            name="Final Count",
-            value=f"**{current:,} / {target:,}** FTDs",
-            inline=False,
-        )
-
         reward_config = challenge.get("reward_config", {})
+        reward_text = "Rewards Distributed:\n"
         if reward_config:
-            reward_text = "Rewards Distributed:\n"
             if "free_entries" in reward_config:
                 reward_text += f"• {reward_config['free_entries']} Free Entries per user\n"
             if "xp_bonus" in reward_config:
                 reward_text += f"• {reward_config['xp_bonus']:,} XP Bonus per user\n"
+        else:
+            reward_text = "All participants rewarded!"
 
-            embed.add_field(
-                name="What You Earned",
-                value=reward_text.strip(),
-                inline=False,
-            )
-
-        embed.set_footer(text="PrizePicks Community")
+        embed = success_embed(
+            "Challenge Complete!",
+            f"The community reached the goal for: **{challenge.get('title')}**",
+            fields=[
+                ("Final Count", f"**{current:,} / {target:,}** FTDs", False),
+                ("What You Earned", reward_text.strip(), False),
+            ],
+        )
 
         return embed
 
@@ -268,7 +243,7 @@ class ReferralChallengesCog(commands.Cog):
         days_duration: int = 7,
     ) -> None:
         """
-        Create a new referral challenge.
+        Create a new referral challenge with validation.
 
         Args:
             ctx: Discord application context
@@ -280,12 +255,47 @@ class ReferralChallengesCog(commands.Cog):
         await ctx.defer()
 
         try:
+            # Validate inputs
+            if not title or not title.strip():
+                embed = error_embed(
+                    "Invalid Title",
+                    "Challenge title cannot be empty",
+                    recovery_hint="Provide a descriptive challenge title",
+                    error_code="INVALID_TITLE",
+                )
+                await ctx.respond(embed=embed, ephemeral=True)
+                return
+
+            parsed_target, target_error = validate_positive_int(str(target), "Target FTDs")
+            if target_error:
+                embed = error_embed(
+                    "Invalid Target",
+                    target_error,
+                    recovery_hint="Target must be a positive number",
+                    error_code="INVALID_TARGET",
+                )
+                await ctx.respond(embed=embed, ephemeral=True)
+                return
+
+            is_valid, duration_error = validate_range(
+                days_duration, 1, 365, "Duration"
+            )
+            if not is_valid:
+                embed = error_embed(
+                    "Invalid Duration",
+                    duration_error,
+                    recovery_hint="Duration must be between 1 and 365 days",
+                    error_code="INVALID_DURATION",
+                )
+                await ctx.respond(embed=embed, ephemeral=True)
+                return
+
             # Build reward config
             reward_config = {}
             if reward_type in ["entries", "both"]:
-                reward_config["free_entries"] = max(5, target // 10)
+                reward_config["free_entries"] = max(5, parsed_target // 10)
             if reward_type in ["xp", "both"]:
-                reward_config["xp_bonus"] = max(500, target * 50)
+                reward_config["xp_bonus"] = max(500, parsed_target * 50)
 
             # Create challenge
             now = datetime.utcnow()
@@ -293,7 +303,7 @@ class ReferralChallengesCog(commands.Cog):
                 "guild_id": ctx.guild.id,
                 "title": title,
                 "challenge_type": "ftd_milestone",
-                "target_count": target,
+                "target_count": parsed_target,
                 "reward_config_json": json.dumps(reward_config),
                 "status": "active",
                 "starts_at": now,
@@ -303,36 +313,35 @@ class ReferralChallengesCog(commands.Cog):
             created = await self.referral_manager.create_challenge(challenge_data)
 
             if created:
-                embed = discord.Embed(
-                    title="Challenge Created!",
-                    description=f"**{title}** has been set up",
-                    color=PRIZEPICKS_PURPLE,
+                embed = success_embed(
+                    "Challenge Created!",
+                    f"**{title}** has been set up",
+                    fields=[
+                        ("Target", f"{parsed_target:,} FTDs", True),
+                        ("Duration", f"{days_duration} days", True),
+                        ("Rewards", ", ".join(k for k in reward_config.keys()), False),
+                    ],
                 )
-                embed.add_field(
-                    name="Target",
-                    value=f"{target:,} FTDs",
-                    inline=True,
-                )
-                embed.add_field(
-                    name="Duration",
-                    value=f"{days_duration} days",
-                    inline=True,
-                )
-
                 await ctx.respond(embed=embed)
                 logger.info(f"Created challenge: {title} in guild {ctx.guild.id}")
             else:
-                await ctx.respond(
-                    "Failed to create challenge.",
-                    ephemeral=True,
+                embed = error_embed(
+                    "Creation Failed",
+                    "Could not create the challenge.",
+                    recovery_hint="Check your input and try again",
+                    error_code="CHALLENGE_CREATE_FAILED",
                 )
+                await ctx.respond(embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error creating challenge: {e}", exc_info=True)
-            await ctx.respond(
-                "Error creating challenge. Please try again.",
-                ephemeral=True,
+            embed = error_embed(
+                "Error",
+                "An unexpected error occurred while creating the challenge.",
+                recovery_hint="Please try again in a moment",
+                error_code="CHALLENGE_CREATE_ERROR",
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     async def _show_active_challenges(
         self,
@@ -350,10 +359,10 @@ class ReferralChallengesCog(commands.Cog):
             )
 
             if not challenges:
-                embed = discord.Embed(
-                    title="No Active Challenges",
-                    description="Check back soon for exciting referral challenges!",
-                    color=PRIZEPICKS_PURPLE,
+                embed = empty_state_embed(
+                    "Challenges",
+                    "No active referral challenges right now.",
+                    ["/challenge active", "/challenge history"],
                 )
                 await ctx.respond(embed=embed)
                 return
@@ -373,10 +382,13 @@ class ReferralChallengesCog(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error showing active challenges: {e}", exc_info=True)
-            await ctx.respond(
-                "Error retrieving challenges.",
-                ephemeral=True,
+            embed = error_embed(
+                "Error",
+                "Could not retrieve challenges.",
+                recovery_hint="Please try again in a moment",
+                error_code="CHALLENGES_RETRIEVAL_ERROR",
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     async def _show_challenge_history(
         self,
@@ -395,21 +407,15 @@ class ReferralChallengesCog(commands.Cog):
             )
 
             if not challenges:
-                embed = discord.Embed(
-                    title="No Challenge History",
-                    description="No completed challenges yet.",
-                    color=PRIZEPICKS_PURPLE,
+                embed = empty_state_embed(
+                    "Challenge History",
+                    "No completed challenges yet.",
+                    ["/challenge active", "/challenge_create"],
                 )
                 await ctx.respond(embed=embed)
                 return
 
-            embed = discord.Embed(
-                title="Challenge History",
-                description="Past referral challenges and results",
-                color=PRIZEPICKS_PURPLE,
-                timestamp=datetime.utcnow(),
-            )
-
+            history_text = ""
             for challenge in challenges[:10]:
                 title = challenge.get("title", "Challenge")
                 status = challenge.get("status", "unknown")
@@ -422,21 +428,30 @@ class ReferralChallengesCog(commands.Cog):
                     "active": "🟢",
                 }
 
-                embed.add_field(
-                    name=f"{status_emoji.get(status, '⚪')} {title}",
-                    value=f"{current:,} / {target:,} FTDs",
-                    inline=False,
+                history_text += (
+                    f"{status_emoji.get(status, '⚪')} **{title}**\n"
+                    f"{current:,} / {target:,} FTDs\n\n"
                 )
 
-            embed.set_footer(text="PrizePicks Community")
+            embed = info_embed(
+                "Challenge History",
+                "Past referral challenges and results",
+                fields=[
+                    ("Past Challenges", history_text.strip(), False),
+                ],
+            )
+
             await ctx.respond(embed=embed)
 
         except Exception as e:
             logger.error(f"Error showing challenge history: {e}", exc_info=True)
-            await ctx.respond(
-                "Error retrieving history.",
-                ephemeral=True,
+            embed = error_embed(
+                "Error",
+                "Could not retrieve challenge history.",
+                recovery_hint="Please try again in a moment",
+                error_code="HISTORY_RETRIEVAL_ERROR",
             )
+            await ctx.respond(embed=embed, ephemeral=True)
 
     @tasks.loop(minutes=10)
     async def update_challenge_progress(self) -> None:
@@ -527,7 +542,7 @@ class ReferralChallengesCog(commands.Cog):
         reward_config: dict,
     ) -> None:
         """
-        Distribute rewards to all linked members.
+        Distribute rewards to all linked members with progress updates.
 
         Rate limited at 500 users/minute to avoid API overload.
 
@@ -549,9 +564,27 @@ class ReferralChallengesCog(commands.Cog):
             # Rate limit: 500 users per minute
             batch_size = 500
             delay_per_batch = 60  # seconds
+            total_members = len(linked_members)
+
+            # Try to find a guild channel to post progress updates
+            guild = self.bot.get_guild(guild_id)
+            progress_channel = None
+            if guild:
+                progress_channel = discord.utils.find(
+                    lambda c: c.name in ["general", "announcements"],
+                    guild.text_channels,
+                )
 
             for idx, member_id in enumerate(linked_members):
                 if idx > 0 and idx % batch_size == 0:
+                    # Post progress update
+                    if progress_channel:
+                        progress = int((idx / total_members) * 100)
+                        embed = loading_embed(
+                            f"Distributing rewards... {idx}/{total_members} ({progress}%)"
+                        )
+                        await progress_channel.send(embed=embed)
+
                     # Wait before next batch
                     await asyncio.sleep(delay_per_batch)
 
