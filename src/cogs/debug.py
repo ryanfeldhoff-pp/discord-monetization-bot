@@ -1,7 +1,6 @@
 """Debug cog for development."""
 
 import logging
-import sys
 
 import discord
 from discord.ext import commands

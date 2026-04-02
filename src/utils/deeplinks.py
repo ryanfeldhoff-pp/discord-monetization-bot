@@ -54,8 +54,8 @@ class DeeplinkGenerator:
             }
 
             # Generate links
-            deeplink = self._build_deeplink(entry_id, params)
-            web_fallback = self._build_web_url(entry_id, params)
+            self._build_deeplink(entry_id, params)
+            self._build_web_url(entry_id, params)
 
             # Return appropriate link based on user agent
             # For Discord, we'll return a universal link that works on all platforms

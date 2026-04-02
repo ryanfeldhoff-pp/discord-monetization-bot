@@ -1,10 +1,9 @@
 """Authentication middleware."""
 
 import logging
-from typing import Optional, Callable
+from typing import Callable
 
 import discord
-from discord.ext import commands
 
 logger = logging.getLogger(__name__)
 

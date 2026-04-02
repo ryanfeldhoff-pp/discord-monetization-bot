@@ -7,17 +7,11 @@ Core functionality for the Referral Amplifier system (Pillar 4).
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
-import secrets
-import qrcode
-from io import BytesIO
 
 import discord
 from discord.ext import commands
 
-from src.models.referral_models import ReferralCode
 from src.services.referral_manager import ReferralManager
-from src.utils.colors import PRIZEPICKS_PRIMARY, SUCCESS, INFO
 from src.utils.embeds import (
     success_embed,
     error_embed,
@@ -27,8 +21,6 @@ from src.utils.embeds import (
     progress_bar,
 )
 from src.utils.pagination import PaginatedView
-from src.utils.validation import validate_positive_int
-from src.utils.error_handler import ValidationError, handle_error
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +153,7 @@ class ReferralLeaderboardEmbed:
 
             entries_list = []
             for idx, entry in enumerate(page_entries, start=start_idx + 1):
-                medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"#{idx}")
+                {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"#{idx}")
                 username = entry.get("username", f"User {entry.get('discord_user_id')}")
                 ftds = entry.get("total_ftds", 0)
                 earnings = entry.get("total_earnings", 0)
@@ -540,7 +532,7 @@ class ReferralTrackingCog(commands.Cog):
         """
         try:
             # Auto-generate referral code for newly linked users
-            referral_data = await self.referral_manager.get_or_create_referral_code(
+            await self.referral_manager.get_or_create_referral_code(
                 user_id
             )
             logger.info(

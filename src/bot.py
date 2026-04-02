@@ -1,9 +1,7 @@
 """Main Discord bot class."""
 
 import logging
-from typing import Optional
 
-import discord
 from discord.ext import commands, tasks
 
 from config.settings import Settings

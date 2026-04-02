@@ -8,7 +8,7 @@ tier calculations, and decay logic.
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, Tuple
 from collections import defaultdict
 
 from sqlalchemy import select, func, and_

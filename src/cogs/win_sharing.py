@@ -5,17 +5,13 @@ Handles win sharing with referral CTAs and post-win DM notifications.
 """
 
 import logging
-import asyncio
 from datetime import datetime
-from typing import Optional
 
 import discord
 from discord.ext import commands, tasks
 
-from src.models.referral_models import WinShareLog
 from src.services.referral_manager import ReferralManager
 from src.services.xp_manager import XPManager
-from src.utils.colors import PRIZEPICKS_PRIMARY, SUCCESS, INFO
 from src.utils.embeds import (
     success_embed,
     error_embed,
@@ -25,6 +21,8 @@ from src.utils.embeds import (
 from src.utils.views import UnsubscribeView
 
 logger = logging.getLogger(__name__)
+
+PRIZEPICKS_PURPLE = 0x8B5CF6
 
 
 class WinShareView(discord.ui.View):
@@ -177,7 +175,7 @@ class WinShareEmbed:
         """
         win_amount = win_data.get("amount", 0)
         picks = win_data.get("picks", [])
-        entry_id = win_data.get("entry_id", "")
+        win_data.get("entry_id", "")
         is_verified = win_data.get("is_verified", True)
 
         # Picks preview (keep short for mobile)

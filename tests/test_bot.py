@@ -1,7 +1,6 @@
 """Tests for the main bot."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from src.bot import MonetizationBot
 from config.settings import Settings

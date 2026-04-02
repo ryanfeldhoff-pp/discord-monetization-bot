@@ -10,10 +10,9 @@ import logging
 import secrets
 import string
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Tuple
-from collections import defaultdict
+from typing import Optional, Dict, List
 
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
@@ -1046,7 +1045,7 @@ class ReferralManager:
             # Check for duplicate account patterns
             # (shared IP, similar metadata, etc.) - placeholder for expanded logic
             if metadata and "referred_pp_user_id" in metadata:
-                pp_user = metadata["referred_pp_user_id"]
+                metadata["referred_pp_user_id"]
                 # Could check for multiple Discord accounts with same PP user
                 # This is a simplified version
 

@@ -1,7 +1,6 @@
 """Transaction management service."""
 
 import logging
-from datetime import datetime
 from typing import List
 
 from src.models.transaction import Transaction, TransactionType

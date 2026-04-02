@@ -6,7 +6,6 @@ Creates all required tables and initializes the database schema.
 Run this once during initial setup.
 """
 
-import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -16,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import get_settings
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
 
 logging.basicConfig(level=logging.INFO)
@@ -183,7 +181,7 @@ def setup_postgresql():
 
     # Parse connection string
     db_url = settings.database.database_url
-    logger.info(f"Setting up PostgreSQL database from URL...")
+    logger.info("Setting up PostgreSQL database from URL...")
 
     # Create synchronous engine for setup
     engine = create_engine(db_url.replace("+asyncpg", ""))

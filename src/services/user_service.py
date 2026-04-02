@@ -1,7 +1,7 @@
 """User management service."""
 
 import logging
-from typing import Optional, List
+from typing import Optional
 
 from src.models.user import User
 

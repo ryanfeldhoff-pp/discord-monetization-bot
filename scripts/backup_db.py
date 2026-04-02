@@ -10,10 +10,10 @@ def backup_database() -> None:
     db_path = Path("data/bot.db")
     backup_dir = Path("backups")
     backup_dir.mkdir(exist_ok=True)
-    
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = backup_dir / f"bot_{timestamp}.db"
-    
+
     if db_path.exists():
         shutil.copy2(db_path, backup_path)
         print(f"Backup created: {backup_path}")

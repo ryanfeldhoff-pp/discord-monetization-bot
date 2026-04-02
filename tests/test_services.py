@@ -1,6 +1,5 @@
 """Tests for services."""
 
-import pytest
 from src.services.user_service import UserService
 from src.services.transaction_service import TransactionService
 from src.models.transaction import TransactionType

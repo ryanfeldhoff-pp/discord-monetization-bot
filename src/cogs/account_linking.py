@@ -14,7 +14,7 @@ import discord
 from aiohttp import web
 from discord.ext import commands
 
-from src.models.database import AccountLink, Database
+from src.models.database import Database
 from src.services.prizepicks_api import PrizepicksAPIClient
 from src.utils.embeds import (
     info_embed,

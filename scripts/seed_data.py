@@ -9,7 +9,7 @@ Run this after setup_db.py if you want sample data.
 import asyncio
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))

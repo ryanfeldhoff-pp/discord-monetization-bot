@@ -3,7 +3,6 @@
 import logging
 from typing import Callable, Any
 
-import discord
 from discord.ext import commands
 
 logger = logging.getLogger(__name__)

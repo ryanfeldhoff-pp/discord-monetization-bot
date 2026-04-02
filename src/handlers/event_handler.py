@@ -1,9 +1,8 @@
 """Event handler utilities."""
 
 import logging
-from typing import Callable, List
+from typing import Callable
 
-import discord
 from discord.ext import commands
 
 logger = logging.getLogger(__name__)

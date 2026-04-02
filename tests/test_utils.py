@@ -1,6 +1,5 @@
 """Tests for utility functions."""
 
-import pytest
 from src.utils import validate_guild_id
 
 

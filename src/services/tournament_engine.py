@@ -7,7 +7,7 @@ prediction submission, scoring, leaderboard generation, and prize distribution.
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict, List, Any
 
 from sqlalchemy import select, func, and_

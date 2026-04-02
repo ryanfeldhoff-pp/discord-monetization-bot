@@ -1,7 +1,5 @@
 """Tests for models."""
 
-import pytest
-from datetime import datetime
 
 from src.models.user import User
 from src.models.transaction import Transaction, TransactionType

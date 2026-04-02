@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 def setup_directories() -> None:
     """Create necessary directories."""
     directories = ["data", "logs", "config"]
-    
+
     for directory in directories:
         Path(directory).mkdir(exist_ok=True)
         logger.info(f"Created directory: {directory}")

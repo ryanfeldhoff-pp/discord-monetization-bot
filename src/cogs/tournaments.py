@@ -5,10 +5,8 @@ Prediction tournament commands — enter, submit picks, view leaderboard.
 Admin commands for creating and scoring tournaments.
 """
 
-import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
 
 import discord
 from discord.ext import commands, tasks

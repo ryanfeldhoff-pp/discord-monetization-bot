@@ -5,13 +5,10 @@ Provides comprehensive fixtures for mocking Discord objects, database sessions,
 Redis clients, and other services used throughout the bot.
 """
 
-import os
 import pytest
-import asyncio
 from datetime import datetime
-from typing import Optional, List
-from unittest.mock import AsyncMock, MagicMock, patch
-from unittest.mock import Mock
+from typing import Optional
+from unittest.mock import AsyncMock, MagicMock
 
 import discord
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker

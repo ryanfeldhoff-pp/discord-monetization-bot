@@ -3,7 +3,6 @@
 import logging
 from pathlib import Path
 
-import discord
 from discord.ext import commands
 
 logger = logging.getLogger(__name__)
@@ -16,11 +15,11 @@ async def setup_cogs(bot: commands.Bot) -> None:
         bot: The bot instance.
     """
     cogs_dir = Path(__file__).parent
-    
+
     for cog_file in cogs_dir.glob("*.py"):
         if cog_file.name.startswith("_"):
             continue
-        
+
         cog_name = cog_file.stem
         try:
             await bot.load_extension(f"src.cogs.{cog_name}")

@@ -14,7 +14,6 @@ from sqlalchemy import (
     Integer,
     String,
     Time,
-    create_engine,
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine

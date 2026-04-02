@@ -1,6 +1,5 @@
 """Tests for helper functions."""
 
-import pytest
 from src.helpers.formatters import format_balance, format_user_list
 from src.helpers.validators import is_valid_amount, is_valid_username
 

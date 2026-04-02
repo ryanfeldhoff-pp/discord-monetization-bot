@@ -1,6 +1,5 @@
 """Input validation helpers."""
 
-from typing import Optional
 
 
 def is_valid_amount(amount: int) -> bool:

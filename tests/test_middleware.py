@@ -1,6 +1,5 @@
 """Tests for middleware."""
 
-import pytest
 from src.middleware.auth import require_admin, require_guild
 
 

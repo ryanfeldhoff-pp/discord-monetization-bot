@@ -8,7 +8,6 @@ and provides one-tap entry tailing via deeplinks.
 import logging
 import re
 from typing import Optional
-from datetime import datetime
 
 import discord
 from discord.ext import commands

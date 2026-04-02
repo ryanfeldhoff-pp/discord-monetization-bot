@@ -1,7 +1,6 @@
 """Balance management service."""
 
 import logging
-from typing import Optional
 
 from src.database import DatabaseManager
 
