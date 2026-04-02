@@ -1,0 +1,23 @@
+# Testing dependencies for Discord Monetization Bot
+
+# Core testing
+pytest>=7.4
+pytest-asyncio>=0.21
+pytest-cov>=4.1
+pytest-mock>=3.11
+
+# Mocking and fixtures
+pytest-xdist>=3.3
+
+# Database testing
+aiosqlite>=0.19
+sqlalchemy>=2.0
+
+# Redis/Cache testing
+fakeredis[aioredis]>=2.20
+
+# Code coverage
+coverage>=7.3
+
+# Additional utilities
+python-dotenv>=1.0
