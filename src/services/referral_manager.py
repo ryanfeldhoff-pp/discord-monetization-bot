@@ -21,7 +21,7 @@ from src.models.referral_models import (
     ReferralConversion,
     ReferralChallenge,
     Ambassador,
-    WinShareLog,
+    WinShare,
     FraudFlag,
 )
 from src.services.prizepicks_api import PrizepicksAPIClient
@@ -860,7 +860,7 @@ class ReferralManager:
         win_amount_cents: int,
         channel_id: Optional[int],
         share_type: str,
-    ) -> WinShareLog:
+    ) -> WinShare:
         """
         Log a win share event with referral CTA.
 
@@ -874,7 +874,7 @@ class ReferralManager:
             share_type: "channel_post", "dm_prompt", or "social_share"
 
         Returns:
-            WinShareLog object
+            WinShare object
 
         Raises:
             Exception: If database error occurs
@@ -884,7 +884,7 @@ class ReferralManager:
             code = await self.get_referral_code(discord_user_id)
             referral_code = code.referral_code if code else None
 
-            share_log = WinShareLog(
+            share_log = WinShare(
                 discord_user_id=discord_user_id,
                 entry_id=entry_id,
                 win_amount_cents=win_amount_cents,
@@ -912,10 +912,10 @@ class ReferralManager:
         Track a click on a shared win's referral CTA.
 
         Args:
-            win_share_id: WinShareLog ID
+            win_share_id: WinShare ID
         """
         try:
-            stmt = select(WinShareLog).where(WinShareLog.id == win_share_id)
+            stmt = select(WinShare).where(WinShare.id == win_share_id)
             result = await self.db.execute(stmt)
             share = result.scalar_one_or_none()
 
@@ -939,7 +939,7 @@ class ReferralManager:
         """
         try:
             # Get all win shares by user
-            stmt = select(WinShareLog).where(WinShareLog.discord_user_id == discord_user_id)
+            stmt = select(WinShare).where(WinShare.discord_user_id == discord_user_id)
             result = await self.db.execute(stmt)
             shares = result.scalars().all()
 

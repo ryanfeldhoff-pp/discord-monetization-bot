@@ -58,6 +58,33 @@ class Poll(Base):
         )
 
 
+class PollVote(Base):
+    """
+    Individual votes on polls.
+
+    Tracks which user voted for which option in a poll.
+    """
+    __tablename__ = "poll_votes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    poll_id: Mapped[int] = mapped_column(Integer, index=True)
+    discord_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    option_index: Mapped[int] = mapped_column(Integer)
+    voted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("poll_id", "discord_user_id", name="uq_poll_vote"),
+        Index("idx_poll_id", "poll_id"),
+        Index("idx_discord_user_id", "discord_user_id"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<PollVote(id={self.id}, poll_id={self.poll_id}, "
+            f"user_id={self.discord_user_id}, option={self.option_index})>"
+        )
+
+
 class Tournament(Base):
     """
     Weekly prediction tournaments within the community.
