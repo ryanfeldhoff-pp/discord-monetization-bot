@@ -44,6 +44,24 @@ class Config:
         "helping_member": 30,
     }
 
+    # Pillar 3: Community Events
+    TACO_TUESDAY_CHANNEL_ID: int = int(os.getenv("TACO_TUESDAY_CHANNEL_ID", "0"))
+    TOURNAMENT_CHANNEL_ID: int = int(os.getenv("TOURNAMENT_CHANNEL_ID", "0"))
+    GAMEDAY_CATEGORY_ID: int = int(os.getenv("GAMEDAY_CATEGORY_ID", "0"))
+    ARCHIVE_CATEGORY_ID: int = int(os.getenv("ARCHIVE_CATEGORY_ID", "0"))
+    SPORTS_SCHEDULE_API_URL: str = os.getenv("SPORTS_SCHEDULE_API_URL", "")
+    SPORTS_SCHEDULE_API_KEY: str = os.getenv("SPORTS_SCHEDULE_API_KEY", "")
+
+    # Pillar 4: Referral Amplifier
+    REFERRAL_CHANNEL_ID: int = int(os.getenv("REFERRAL_CHANNEL_ID", "0"))
+    CHALLENGES_CHANNEL_ID: int = int(os.getenv("CHALLENGES_CHANNEL_ID", "0"))
+    WIN_SHARING_CHANNEL_ID: int = int(os.getenv("WIN_SHARING_CHANNEL_ID", "0"))
+    AMBASSADOR_ROLE_ID: int = int(os.getenv("AMBASSADOR_ROLE_ID", "0"))
+    WIN_WEBHOOK_SECRET: str = os.getenv("WIN_WEBHOOK_SECRET", "")
+    RESTRICTED_STATES: list = json.loads(
+        os.getenv("RESTRICTED_STATES", '["NY", "NV", "ID", "WA", "MT"]')
+    )
+
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE: Optional[str] = os.getenv("LOG_FILE", None)
