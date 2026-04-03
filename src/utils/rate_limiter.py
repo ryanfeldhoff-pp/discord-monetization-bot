@@ -6,6 +6,7 @@ Token bucket algorithm for per-user and per-channel rate limiting.
 
 import logging
 from datetime import datetime, timedelta
+from typing import Deque
 
 logger = logging.getLogger(__name__)
 

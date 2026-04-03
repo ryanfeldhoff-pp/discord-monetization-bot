@@ -1,20 +1,13 @@
 """
-Community Events Database Models
+Community Events Database Models (Pillar 3)
 
-Async SQLAlchemy models for managing polls, tournaments, game-day channels,
-and scheduled events within Discord communities.
+Models for polls, tournaments, predictions, and game-day channels.
 """
 
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import (
-    BigInteger,
-    DateTime,
-    Integer,
-    String,
-    Text,
-    Index,
-    UniqueConstraint,
+    BigInteger, DateTime, Integer, String, Text, Boolean, JSON, Index, Float,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,195 +15,125 @@ from src.models.xp_models import Base
 
 
 class Poll(Base):
-    """
-    Weekly community polls (Taco Tuesday, custom surveys, etc.).
-
-    Tracks poll questions, options, votes, and lifecycle state.
-    """
+    """Community poll (Taco Tuesday, custom polls, etc.)."""
     __tablename__ = "polls"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    channel_id: Mapped[int] = mapped_column(BigInteger)
-    message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    poll_type: Mapped[str] = mapped_column(String(50))  # "taco_tuesday", "community", "custom"
-    options_json: Mapped[str] = mapped_column(Text)  # JSON list of option dicts
-    votes_json: Mapped[str] = mapped_column(Text)  # JSON dict of user_id -> option_index
-    status: Mapped[str] = mapped_column(String(20))  # "active", "closed", "scheduled"
-    created_by: Mapped[int] = mapped_column(BigInteger)
-    scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    poll_type: Mapped[str] = mapped_column(String(50), default="custom")  # "taco_tuesday", "custom", "projection"
+    options_json: Mapped[str] = mapped_column(Text)  # JSON array of option strings
+    channel_id: Mapped[int] = mapped_column(BigInteger)
+    message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # Discord message with poll embed
+    created_by: Mapped[int] = mapped_column(BigInteger)  # admin who created
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     closes_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        Index("idx_guild_id", "guild_id"),
-        Index("idx_status", "status"),
+        Index("idx_poll_active", "is_active"),
         Index("idx_poll_type", "poll_type"),
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<Poll(id={self.id}, guild_id={self.guild_id}, "
-            f"title={self.title}, status={self.status})>"
-        )
+        return f"<Poll(id={self.id}, title='{self.title}', active={self.is_active})>"
 
 
 class PollVote(Base):
-    """
-    Individual votes on polls.
-
-    Tracks which user voted for which option in a poll.
-    """
+    """Individual vote on a poll."""
     __tablename__ = "poll_votes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     poll_id: Mapped[int] = mapped_column(Integer, index=True)
     discord_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    option_index: Mapped[int] = mapped_column(Integer)
+    option_index: Mapped[int] = mapped_column(Integer)  # 0-based index into options_json
     voted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
-        UniqueConstraint("poll_id", "discord_user_id", name="uq_poll_vote"),
-        Index("idx_poll_id", "poll_id"),
-        Index("idx_discord_user_id", "discord_user_id"),
+        Index("idx_poll_user", "poll_id", "discord_user_id", unique=True),
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<PollVote(id={self.id}, poll_id={self.poll_id}, "
-            f"user_id={self.discord_user_id}, option={self.option_index})>"
-        )
+        return f"<PollVote(poll={self.poll_id}, user={self.discord_user_id}, option={self.option_index})>"
 
 
 class Tournament(Base):
-    """
-    Weekly prediction tournaments within the community.
-
-    Tracks tournament metadata, scoring rules, prizes, and lifecycle.
-    """
+    """Prediction tournament container."""
     __tablename__ = "tournaments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    guild_id: Mapped[int] = mapped_column(BigInteger, index=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tournament_type: Mapped[str] = mapped_column(String(50))  # "weekly_prediction", "special_event"
-    status: Mapped[str] = mapped_column(String(20))  # "upcoming", "active", "scoring", "completed", "cancelled"
-    entry_fee_xp: Mapped[int] = mapped_column(Integer, default=0)
-    max_participants: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    prize_config_json: Mapped[str] = mapped_column(Text)  # JSON with prize tiers
-    scoring_config_json: Mapped[str] = mapped_column(Text)  # JSON with scoring rules
-    starts_at: Mapped[datetime] = mapped_column(DateTime)
-    ends_at: Mapped[datetime] = mapped_column(DateTime)
+    tournament_type: Mapped[str] = mapped_column(String(50), default="weekly")  # "weekly", "seasonal", "special"
+    sport: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    entry_fee_xp: Mapped[int] = mapped_column(Integer, default=0)  # XP cost to enter (0 = free)
+    max_participants: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unlimited
+    picks_required: Mapped[int] = mapped_column(Integer, default=5)
+    prize_pool_json: Mapped[str] = mapped_column(Text, default='{"1st": "Free Entry ($10)", "2nd": "Free Entry ($5)", "3rd": "Discount Code"}')
+    status: Mapped[str] = mapped_column(String(20), default="upcoming")  # "upcoming", "open", "locked", "scoring", "completed"
+    channel_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_by: Mapped[int] = mapped_column(BigInteger)
+    opens_at: Mapped[datetime] = mapped_column(DateTime)
+    locks_at: Mapped[datetime] = mapped_column(DateTime)  # No more entries/predictions after this
+    scores_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        Index("idx_guild_status", "guild_id", "status"),
-        Index("idx_starts_at", "starts_at"),
+        Index("idx_tournament_status", "status"),
+        Index("idx_tournament_opens", "opens_at"),
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<Tournament(id={self.id}, guild_id={self.guild_id}, "
-            f"title={self.title}, status={self.status})>"
-        )
+        return f"<Tournament(id={self.id}, title='{self.title}', status={self.status})>"
 
 
 class TournamentEntry(Base):
-    """
-    User entry records in tournaments.
-
-    Tracks predictions, scores, rankings, and prize information per user per tournament.
-    """
+    """User entry/registration in a tournament."""
     __tablename__ = "tournament_entries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tournament_id: Mapped[int] = mapped_column(Integer, index=True)
     discord_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    predictions_json: Mapped[str] = mapped_column(Text)  # JSON list of predictions
-    score: Mapped[int] = mapped_column(Integer, default=0)
+    predictions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of picks
+    score: Mapped[float] = mapped_column(Float, default=0.0)
     rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    prize_awarded: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    xp_paid: Mapped[int] = mapped_column(Integer, default=0)
     entered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     scored_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("tournament_id", "discord_user_id", name="uq_tournament_user"),
-        Index("idx_tournament_id", "tournament_id"),
-        Index("idx_discord_user_id", "discord_user_id"),
+        Index("idx_tourney_user", "tournament_id", "discord_user_id", unique=True),
+        Index("idx_tourney_score", "tournament_id", "score"),
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<TournamentEntry(id={self.id}, tournament_id={self.tournament_id}, "
-            f"user_id={self.discord_user_id}, rank={self.rank})>"
-        )
+        return f"<TournamentEntry(tournament={self.tournament_id}, user={self.discord_user_id}, score={self.score})>"
 
 
 class GameDayChannel(Base):
-    """
-    Auto-generated game-day specific channels.
-
-    Tracks channel lifecycle, sport/event metadata, and archive status.
-    """
+    """Auto-created game-day channels."""
     __tablename__ = "gameday_channels"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    guild_id: Mapped[int] = mapped_column(BigInteger)
-    channel_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    sport: Mapped[str] = mapped_column(String(50))  # "nfl", "nba", "mlb", etc.
-    event_name: Mapped[str] = mapped_column(String(200))
-    event_id: Mapped[str] = mapped_column(String(100))  # External event ID
-    status: Mapped[str] = mapped_column(String(20))  # "scheduled", "active", "archived"
-    scheduled_start: Mapped[datetime] = mapped_column(DateTime)
-    actual_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    channel_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    sport: Mapped[str] = mapped_column(String(50))
+    event_name: Mapped[str] = mapped_column(String(200))  # e.g. "Chiefs vs Bills"
+    event_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # External event ID
+    start_time: Mapped[datetime] = mapped_column(DateTime)
+    end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="scheduled")  # "scheduled", "active", "archived"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
-        Index("idx_guild_status", "guild_id", "status"),
-        Index("idx_sport", "sport"),
-        Index("idx_event_id", "event_id"),
+        Index("idx_gameday_status", "status"),
+        Index("idx_gameday_start", "start_time"),
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<GameDayChannel(id={self.id}, guild_id={self.guild_id}, "
-            f"event={self.event_name}, status={self.status})>"
-        )
-
-
-class ScheduledEvent(Base):
-    """
-    Generic scheduled community events (AMAs, special events, etc.).
-
-    Tracks event metadata, hosts, configuration, and lifecycle.
-    """
-    __tablename__ = "scheduled_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    guild_id: Mapped[int] = mapped_column(BigInteger)
-    event_type: Mapped[str] = mapped_column(String(50))  # "ama", "special", "custom"
-    title: Mapped[str] = mapped_column(String(200))
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    host_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    channel_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    status: Mapped[str] = mapped_column(String(20))  # "scheduled", "active", "completed", "cancelled"
-    config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    starts_at: Mapped[datetime] = mapped_column(DateTime)
-    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        Index("idx_guild_type_status", "guild_id", "event_type", "status"),
-    )
-
-    def __repr__(self) -> str:
-        return (
-            f"<ScheduledEvent(id={self.id}, guild_id={self.guild_id}, "
-            f"type={self.event_type}, title={self.title}, status={self.status})>"
-        )
+        return f"<GameDayChannel(id={self.id}, event='{self.event_name}', status={self.status})>"

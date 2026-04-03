@@ -5,9 +5,10 @@ Monitors PrizePicks projections API for new drops and line movements,
 sends formatted alerts to subscribed users in sport-specific channels.
 """
 
+import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, time
 from typing import Optional
 
 import discord
@@ -126,7 +127,7 @@ class BoardAlertsCog(commands.Cog):
 
             embed = success_embed(
                 f"{sport} Alerts Enabled",
-                "You'll receive notifications when new boards drop.",
+                f"You'll receive notifications when new boards drop.",
             )
             await ctx.respond(embed=embed, ephemeral=True)
             logger.info(f"User {ctx.author.id} subscribed to {sport}")

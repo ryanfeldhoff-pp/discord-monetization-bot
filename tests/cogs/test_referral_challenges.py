@@ -7,7 +7,7 @@ challenge creation with validation, and progress bar capping at 100%.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 from discord.ext import commands

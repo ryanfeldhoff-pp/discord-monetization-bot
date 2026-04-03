@@ -155,7 +155,7 @@ async def test_tier_bronze_displays_perks(tiered_roles_cog, mock_context):
     embed = call_kwargs["embed"]
 
     bronze_perks = tiered_roles_cog.TIER_PERKS["bronze"]
-    str(embed.fields)
+    perks_text = str(embed.fields)
     assert len(bronze_perks) > 0
 
 
@@ -185,7 +185,7 @@ async def test_tier_down_grace_period(tiered_roles_cog):
     member.send.assert_called_once()
     call_kwargs = member.send.call_args[1]
     assert "embed" in call_kwargs
-    call_kwargs["embed"]
+    embed = call_kwargs["embed"]
 
     assert tiered_roles_cog.TIER_DOWN_GRACE_DAYS == 7
 

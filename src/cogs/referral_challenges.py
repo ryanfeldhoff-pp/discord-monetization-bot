@@ -7,10 +7,12 @@ E.g., "500 Discord FTDs this month → everyone gets a free entry!"
 
 import logging
 from datetime import datetime, timedelta
+from typing import Optional
 
 import discord
 from discord.ext import commands, tasks
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.services.referral_manager import ReferralManager
 from src.services.xp_manager import XPManager

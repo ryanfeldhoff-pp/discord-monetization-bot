@@ -6,7 +6,7 @@ Handles message listening for XP awards, XP commands, and anti-spam logic.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Optional, Dict
 from collections import defaultdict
 
 import discord
@@ -23,6 +23,7 @@ from src.utils.embeds import (
     progress_bar,
 )
 from src.utils.pagination import PaginatedView
+from src.utils.views import ConfirmView
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ custom admin polls, and bar-chart result visualization.
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List
+from typing import Optional, Dict, List
 
 import discord
 from discord.ext import commands, tasks

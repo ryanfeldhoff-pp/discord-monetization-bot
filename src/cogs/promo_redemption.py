@@ -5,8 +5,9 @@ Handles XP-to-promo code redemptions with monthly limits per tier.
 """
 
 import logging
+import json
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 import discord
 from discord.ext import commands

@@ -16,6 +16,7 @@ from src.utils.colors import (
     WARNING,
     INFO,
     NEUTRAL,
+    get_tier_color,
 )
 
 

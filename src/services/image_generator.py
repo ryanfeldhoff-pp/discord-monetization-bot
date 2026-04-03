@@ -6,7 +6,8 @@ Generates branded recap cards using Pillow for monthly user statistics.
 
 import io
 import logging
-from typing import Optional
+from datetime import datetime
+from typing import Optional, Tuple, Dict
 
 from PIL import Image, ImageDraw, ImageFont
 import qrcode
@@ -161,8 +162,7 @@ class RecapCardGenerator:
         """
         # Title background
         draw.rectangle(
-            [(0, y),
-            (self.CARD_WIDTH, y + 150)],
+            [(0, y), (self.CARD_WIDTH, y + 150)],
             fill=self.PRIMARY_COLOR,
         )
 
@@ -222,12 +222,12 @@ class RecapCardGenerator:
             New Y position
         """
         stats = [
-            ("Entries Placed", f"{entries_placed:,}", "ð"),
-            ("Win Rate", f"{win_rate:.1f}%", "ð¯"),
-            ("Biggest Win", f"${biggest_win:,.2f}", "ð°"),
-            ("XP Earned", f"{xp_earned:,}", "â­"),
-            ("Messages Sent", f"{messages_sent:,}", "ð¬"),
-            ("Community Rank", f"#{community_rank}", "ð"),
+            ("Entries Placed", f"{entries_placed:,}", "📊"),
+            ("Win Rate", f"{win_rate:.1f}%", "🎯"),
+            ("Biggest Win", f"${biggest_win:,.2f}", "💰"),
+            ("XP Earned", f"{xp_earned:,}", "⭐"),
+            ("Messages Sent", f"{messages_sent:,}", "💬"),
+            ("Community Rank", f"#{community_rank}", "🏆"),
         ]
 
         # Grid layout: 2 columns x 3 rows
@@ -397,7 +397,7 @@ class RecapCardGenerator:
         )
 
         # Footer text
-        footer_text = "PrizePicks Discord Monetization â¢ 2024"
+        footer_text = "PrizePicks Discord Monetization • 2024"
         footer_bbox = draw.textbbox((0, 0), footer_text, font=self.font_small)
         footer_width = footer_bbox[2] - footer_bbox[0]
         footer_x = (self.CARD_WIDTH - footer_width) // 2

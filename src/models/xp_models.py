@@ -14,9 +14,11 @@ from sqlalchemy import (
     String,
     Text,
     Boolean,
+    JSON,
     Index,
 )
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column
+from sqlalchemy.ext.asyncio import AsyncSession
 
 Base = declarative_base()
 

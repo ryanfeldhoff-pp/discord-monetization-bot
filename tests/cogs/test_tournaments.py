@@ -7,6 +7,7 @@ leaderboard pagination, and scoring with confirmation.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta
 
 import discord
 from discord.ext import commands
@@ -166,7 +167,7 @@ async def test_tournament_leaderboard_paginated(tournaments_cog, mock_context):
     tournaments_cog.engine.get_tournament = AsyncMock(return_value=tournament)
     tournaments_cog.engine.get_leaderboard = AsyncMock(return_value=entries)
     tournaments_cog.bot.fetch_user = AsyncMock()
-    tournaments_cog.bot.fetch_user.return_value = MagicMock(name="User")
+    tournaments_cog.bot.fetch_user.return_value = MagicMock(name=f"User")
 
     await tournaments_cog.tournament_leaderboard.callback(tournaments_cog, mock_context, tournament_id=1)
 

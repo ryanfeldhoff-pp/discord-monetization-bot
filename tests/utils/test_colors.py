@@ -4,6 +4,7 @@ Tests for color constants in src/utils/colors.py
 Validates that all color codes are valid hex values and properly defined.
 """
 
+import pytest
 from src.utils.colors import (
     PRIZEPICKS_PRIMARY,
     PRIZEPICKS_SECONDARY,

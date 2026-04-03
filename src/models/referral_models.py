@@ -7,7 +7,7 @@ Models for referral tracking, challenges, ambassador program, and win sharing.
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import (
-    BigInteger, DateTime, Integer, String, Text, Boolean, Index,
+    BigInteger, DateTime, Integer, String, Text, Boolean, Index, Float,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
