@@ -182,7 +182,7 @@ async def test_xp_leaderboard_returns_embed(xp_cog, mock_context):
 
     xp_cog.bot.fetch_user = AsyncMock(side_effect=lambda uid: MagicMock(name=f"User{uid}"))
 
-    await xp_cog.leaderboard_command(mock_context)
+    await xp_cog.leaderboard_command.callback(xp_cog, mock_context)
 
     mock_context.respond.assert_called_once()
     call_kwargs = mock_context.respond.call_args[1]
@@ -203,7 +203,7 @@ async def test_xp_leaderboard_empty_state(xp_cog, mock_context):
         }
     )
 
-    await xp_cog.leaderboard_command(mock_context)
+    await xp_cog.leaderboard_command.callback(xp_cog, mock_context)
 
     mock_context.respond.assert_called_once()
     call_kwargs = mock_context.respond.call_args[1]
@@ -231,7 +231,7 @@ async def test_xp_command_returns_user_xp(xp_cog, mock_context):
         }
     )
 
-    await xp_cog.xp_command(mock_context)
+    await xp_cog.xp_command.callback(xp_cog, mock_context)
 
     mock_context.respond.assert_called_once()
     call_kwargs = mock_context.respond.call_args[1]

@@ -147,7 +147,7 @@ async def test_tier_bronze_displays_perks(tiered_roles_cog, mock_context):
         "diamond": 50000,
     }
 
-    await tiered_roles_cog.tier_command(mock_context)
+    await tiered_roles_cog.tier_command.callback(tiered_roles_cog, mock_context)
 
     mock_context.respond.assert_called_once()
     call_kwargs = mock_context.respond.call_args[1]
