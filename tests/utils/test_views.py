@@ -6,8 +6,7 @@ to ensure views are defined correctly and have proper attributes.
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
-import discord
+from unittest.mock import patch
 
 
 class TestConfirmViewDefinition:

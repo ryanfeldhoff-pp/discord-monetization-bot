@@ -5,7 +5,6 @@ Manages referral codes, conversion tracking, ambassador tiers,
 community challenges, and fraud prevention.
 """
 
-import hashlib
 import json
 import logging
 import secrets
@@ -13,7 +12,7 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 
-from sqlalchemy import select, func, and_, update
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 

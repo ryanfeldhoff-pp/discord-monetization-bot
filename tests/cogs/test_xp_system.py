@@ -6,8 +6,7 @@ leaderboard display, and tier-up notifications.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import discord
 from discord.ext import commands

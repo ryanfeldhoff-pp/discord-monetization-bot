@@ -7,7 +7,6 @@ stats display with empty state, and leaderboard pagination.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timedelta
 
 import discord
 from discord.ext import commands

@@ -6,7 +6,7 @@ and tier-down grace periods.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict
 
 import discord
@@ -14,7 +14,7 @@ from discord.ext import commands, tasks
 
 from src.services.xp_manager import XPManager
 from src.utils.colors import get_tier_color
-from src.utils.embeds import success_embed, warning_embed, info_embed, error_embed
+from src.utils.embeds import success_embed, info_embed, error_embed
 
 logger = logging.getLogger(__name__)
 

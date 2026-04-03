@@ -7,10 +7,10 @@ scoring, and prize distribution.
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 
-from sqlalchemy import select, func, and_, update
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 

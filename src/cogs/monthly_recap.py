@@ -82,7 +82,7 @@ class MonthlyRecap(commands.Cog):
             user_id = ctx.author.id
 
             # Send loading state
-            loading_msg = await ctx.respond(embed=loading_embed("Generating your monthly recap..."))
+            loading_msg = await ctx.respond(embed=loading_embed("Generating your monthly recap..."))  # noqa: F841
 
             # Check if account is linked
             stmt = select(AccountLink).where(AccountLink.discord_user_id == user_id)
@@ -318,7 +318,7 @@ class MonthlyRecap(commands.Cog):
             recap_image = self.image_generator.generate_recap_card(**recap_data)
 
             # Create referral link
-            referral_link = await self._generate_referral_link(user_id)
+            referral_link = await self._generate_referral_link(user_id)  # noqa: F841
 
             # Create embed with month/year context
             month_year = datetime.utcnow().strftime("%B %Y")

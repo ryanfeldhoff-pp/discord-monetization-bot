@@ -7,7 +7,6 @@ and invalid input validation.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timedelta
 
 import discord
 from discord.ext import commands
@@ -156,7 +155,7 @@ async def test_create_poll_too_few_options_rejected(polls_cog, mock_context):
 @pytest.mark.asyncio
 async def test_poll_vote_registers(polls_cog, mock_context):
     """Test that votes on polls are registered."""
-    from src.models.event_models import Poll, PollVote
+    from src.models.event_models import Poll
 
     poll = MagicMock(spec=Poll)
     poll.id = 1

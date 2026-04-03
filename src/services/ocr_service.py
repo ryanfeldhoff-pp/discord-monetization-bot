@@ -4,7 +4,6 @@ OCR Service abstraction supporting multiple providers.
 Abstracts OCR operations to support Google Vision, AWS Textract, or other providers.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum

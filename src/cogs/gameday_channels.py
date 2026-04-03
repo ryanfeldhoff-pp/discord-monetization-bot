@@ -6,7 +6,6 @@ Auto-creates and archives game-day discussion channels based on sports schedules
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, List
 
 import discord
 from discord.ext import commands, tasks

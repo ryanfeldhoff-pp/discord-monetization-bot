@@ -6,8 +6,7 @@ Generates branded recap cards using Pillow for monthly user statistics.
 
 import io
 import logging
-from datetime import datetime
-from typing import Optional, Tuple, Dict
+from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 import qrcode

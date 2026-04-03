@@ -6,7 +6,6 @@ Auto-generates referral codes when users link their accounts.
 """
 
 import logging
-from typing import Optional
 
 import discord
 from discord.ext import commands

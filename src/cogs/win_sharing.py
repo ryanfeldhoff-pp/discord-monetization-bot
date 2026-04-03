@@ -6,11 +6,9 @@ and manages post-win DM notifications with referral CTAs.
 """
 
 import logging
-from typing import Optional
 
 import discord
 from discord.ext import commands
-from aiohttp import web
 
 from src.services.referral_manager import ReferralManager
 from src.services.xp_manager import XPManager

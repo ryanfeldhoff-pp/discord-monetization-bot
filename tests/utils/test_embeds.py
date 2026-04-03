@@ -5,9 +5,6 @@ Validates all embed creation functions produce correctly formatted embeds
 with proper colors, fields, and content.
 """
 
-import pytest
-import discord
-from datetime import datetime
 
 from src.utils.embeds import (
     success_embed,

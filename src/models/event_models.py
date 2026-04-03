@@ -7,7 +7,7 @@ Models for polls, tournaments, predictions, and game-day channels.
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import (
-    BigInteger, DateTime, Integer, String, Text, Boolean, JSON, Index, Float,
+    BigInteger, DateTime, Integer, String, Text, Boolean, Index, Float,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
